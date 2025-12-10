@@ -39,6 +39,12 @@ namespace GakumasLocal::Local {
         return Plugin::GetInstance().GetHookInstaller()->localizationFilesDir;
     }
 
+    bool isAllSpace(const std::string& str) {
+        return std::all_of(str.begin(), str.end(), [](unsigned char c) {
+            return std::isspace(c);
+        });
+    }
+
     std::string trim(const std::string& str) {
         auto is_not_space = [](char ch) { return !std::isspace(ch); };
         auto start = std::ranges::find_if(str, is_not_space);
@@ -343,6 +349,7 @@ namespace GakumasLocal::Local {
         bool hasNotTrans = false;
         if (!waitingReplaceTexts.empty()) {
             for (const auto& i : waitingReplaceTexts) {
+                if (isAllSpace(i)) continue;
                 std::string searchResult = findInMapIgnoreSpace(i, genericSplitText);
                 if (!searchResult.empty()) {
                     ReplaceNumberComma(&searchResult);
