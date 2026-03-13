@@ -6,6 +6,7 @@
 #include "Local.h"
 #include "MasterLocal.h"
 #include <unordered_set>
+#include <algorithm>
 #include "camera/camera.hpp"
 #include "config/Config.hpp"
 // #include <jni.h>
@@ -466,6 +467,8 @@ namespace GakumasLocal::HookMain {
                                                       "TMPro", "TMP_Text", "get_font");
         static auto set_font = Il2cppUtils::GetMethod("Unity.TextMeshPro.dll",
                                                       "TMPro", "TMP_Text", "set_font");
+        static auto get_name = Il2cppUtils::GetMethod("UnityEngine.CoreModule.dll",
+                                                      "UnityEngine", "Object", "get_name");
 //        static auto set_fontMaterial = Il2cppUtils::GetMethod("Unity.TextMeshPro.dll",
 //                                                      "TMPro", "TMP_Text", "set_fontMaterial");
 //        static auto ForceMeshUpdate = Il2cppUtils::GetMethod("Unity.TextMeshPro.dll",
@@ -479,21 +482,32 @@ namespace GakumasLocal::HookMain {
         static auto UpdateFontAssetData = Il2cppUtils::GetMethod("Unity.TextMeshPro.dll", "TMPro",
                                                                  "TMP_FontAsset", "UpdateFontAssetData");
 
+        auto fontAsset = get_font->Invoke<void*>(TMP_Textself);
+        if (!fontAsset) {
+            return;
+        }
+
+        // 检查字体名称，跳过 CampusAlphanumeric 系列字体
+        auto fontAssetName = get_name->Invoke<Il2cppString*>(fontAsset);
+        if (fontAssetName) {
+            std::string fontName = fontAssetName->ToString();
+            std::transform(fontName.begin(), fontName.end(), fontName.begin(), 
+                [](unsigned char c) { return std::tolower(c); });
+            if (fontName.find("campusalphanumeric") != std::string::npos) {
+                return;  // 保持原版数字字体
+            }
+        }
+
         auto newFont = GetReplaceFont();
         if (!newFont) return;
 
-        auto fontAsset = get_font->Invoke<void*>(TMP_Textself);
-        if (fontAsset) {
-            set_sourceFontFile->Invoke<void>(fontAsset, newFont);
-            if (!updatedFontPtrs.contains(fontAsset)) {
-                updatedFontPtrs.emplace(fontAsset);
-                UpdateFontAssetData->Invoke<void>(fontAsset);
-            }
-            if (updatedFontPtrs.size() > 200) updatedFontPtrs.clear();
+        set_sourceFontFile->Invoke<void>(fontAsset, newFont);
+        if (!updatedFontPtrs.contains(fontAsset)) {
+            updatedFontPtrs.emplace(fontAsset);
+            UpdateFontAssetData->Invoke<void>(fontAsset);
         }
-        else {
-			Log::Error("UpdateFont: fontAsset is null.");
-        }
+        if (updatedFontPtrs.size() > 200) updatedFontPtrs.clear();
+        
         set_font->Invoke<void>(TMP_Textself, fontAsset);
 
 //        auto fontMaterial = get_material->Invoke<void*>(fontAsset);
@@ -522,6 +536,46 @@ namespace GakumasLocal::HookMain {
         }
         else {
             TMP_Text_PopulateTextBackingArray_Orig(self, text, start, length);
+        }
+        UpdateFont(self);
+    }
+
+    DEFINE_HOOK(void, TMP_Text_set_text, (void* self, Il2cppString* value, void* mtd)) {
+        if (!value) {
+            return TMP_Text_set_text_Orig(self, value, mtd);
+        }
+        const std::string origText = value->ToString();
+        std::string transText;
+        if (Local::GetGenericText(origText, &transText)) {
+            const auto newText = UnityResolve::UnityType::String::New(transText);
+            UpdateFont(self);
+            return TMP_Text_set_text_Orig(self, newText, mtd);
+        }
+        if (Config::textTest) {
+            TMP_Text_set_text_Orig(self, UnityResolve::UnityType::String::New("[TT]" + origText), mtd);
+        }
+        else {
+            TMP_Text_set_text_Orig(self, value, mtd);
+        }
+        UpdateFont(self);
+    }
+
+    DEFINE_HOOK(void, TMP_Text_SetText_1, (void* self, Il2cppString* sourceText, void* mtd)) {
+        if (!sourceText) {
+            return TMP_Text_SetText_1_Orig(self, sourceText, mtd);
+        }
+        const std::string origText = sourceText->ToString();
+        std::string transText;
+        if (Local::GetGenericText(origText, &transText)) {
+            const auto newText = UnityResolve::UnityType::String::New(transText);
+            UpdateFont(self);
+            return TMP_Text_SetText_1_Orig(self, newText, mtd);
+        }
+        if (Config::textTest) {
+            TMP_Text_SetText_1_Orig(self, UnityResolve::UnityType::String::New("[T1]" + origText), mtd);
+        }
+        else {
+            TMP_Text_SetText_1_Orig(self, sourceText, mtd);
         }
         UpdateFont(self);
     }
@@ -572,9 +626,64 @@ namespace GakumasLocal::HookMain {
         TextMeshProUGUI_Awake_Orig(self, method);
     }
 
-    // TODO 文本未hook完整
+    // Legacy UnityEngine.UI.Text hook（礼物/邮件等非TMP界面）
+    DEFINE_HOOK(void, UIText_set_text, (void* self, Il2cppString* value)) {
+        if (!value) {
+            return UIText_set_text_Orig(self, value);
+        }
+        const std::string origText = value->ToString();
+        std::string transText;
+        if (Local::GetGenericText(origText, &transText)) {
+            const auto newText = UnityResolve::UnityType::String::New(transText);
+            return UIText_set_text_Orig(self, newText);
+        }
+        if (Config::textTest) {
+            UIText_set_text_Orig(self, UnityResolve::UnityType::String::New("[UI]" + origText));
+        }
+        else {
+            UIText_set_text_Orig(self, value);
+        }
+    }
+
+    // TMP_Text.SetCharArray(char[], int, int) — 礼物/邮件描述文字通过此路径设置
+    DEFINE_HOOK(void, TMP_Text_SetCharArray, (void* self, void* charArray, int start, int count, void* mtd)) {
+        if (charArray && start >= 0 && count > 0) {
+            // IL2CPP char[] elements are uint16_t (UTF-16)
+            auto arr = reinterpret_cast<UnityResolve::UnityType::Array<uint16_t>*>(charArray);
+            // 边界检查：确保 start+count 不超出数组长度
+            if (static_cast<uintptr_t>(start + count) <= arr->max_length) {
+                auto rawData = arr->GetData();
+                if (rawData) {
+                    // rawData 是 uintptr_t（字节地址），每个 char16_t 占 2 字节
+                    // 必须用 start * sizeof(char16_t) 而非直接 + start（否则偏移量减半）
+                    const std::u16string u16(
+                        reinterpret_cast<const char16_t*>(rawData + static_cast<uintptr_t>(start) * sizeof(char16_t)),
+                        static_cast<size_t>(count));
+                    const std::string origText = Misc::ToUTF8(u16);
+                    std::string transText;
+                    if (Local::GetGenericText(origText, &transText)) {
+                        UpdateFont(self);
+                        TMP_Text_set_text_Orig(self, Il2cppString::New(transText), nullptr);
+                        return;
+                    }
+                    if (Config::textTest) {
+                        UpdateFont(self);
+                        TMP_Text_set_text_Orig(self, Il2cppString::New("[CA]" + origText), nullptr);
+                        return;
+                    }
+                }
+            }
+        }
+        TMP_Text_SetCharArray_Orig(self, charArray, start, count, mtd);
+    }
+
     DEFINE_HOOK(void, TextField_set_value, (void* self, Il2cppString* value)) {
-        Log::DebugFmt("TextField_set_value: %s", value->ToString().c_str());
+        if (value) {
+            std::string transText;
+            if (Local::GetGenericText(value->ToString(), &transText)) {
+                return TextField_set_value_Orig(self, UnityResolve::UnityType::String::New(transText));
+            }
+        }
         TextField_set_value_Orig(self, value);
     }
 
@@ -1597,6 +1706,11 @@ namespace GakumasLocal::HookMain {
         ADD_HOOK(TextMeshProUGUI_Awake, Il2cppUtils::GetMethodPointer("Unity.TextMeshPro.dll", "TMPro",
                                                                       "TextMeshProUGUI", "Awake"));
 
+        ADD_HOOK(TMP_Text_set_text, Il2cppUtils::GetMethodPointer("Unity.TextMeshPro.dll", "TMPro",
+                                                                  "TMP_Text", "set_text"));
+        ADD_HOOK(TMP_Text_SetText_1, Il2cppUtils::GetMethodPointer("Unity.TextMeshPro.dll", "TMPro",
+                                                                  "TMP_Text", "SetText",
+                                                                  {"System.String"}));
         ADD_HOOK(TMP_Text_PopulateTextBackingArray, Il2cppUtils::GetMethodPointer("Unity.TextMeshPro.dll", "TMPro",
                                                                   "TMP_Text", "PopulateTextBackingArray",
                                                                   {"System.String", "System.Int32", "System.Int32"}));
@@ -1606,6 +1720,21 @@ namespace GakumasLocal::HookMain {
 
         ADD_HOOK(TextField_set_value, Il2cppUtils::GetMethodPointer("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements",
                                                                   "TextField", "set_value"));
+
+        // Legacy UnityEngine.UI.Text hook
+        {
+            auto uiTextPtr = Il2cppUtils::GetMethodPointer("UnityEngine.UI.dll", "UnityEngine.UI",
+                                                           "Text", "set_text");
+            if (uiTextPtr) {
+                ADD_HOOK(UIText_set_text, uiTextPtr);
+            }
+            else {
+                Log::InfoFmt("UIText_set_text: method not found, legacy UI.Text hook skipped.");
+            }
+        }
+
+        ADD_HOOK(TMP_Text_SetCharArray, Il2cppUtils::GetMethodPointer("Unity.TextMeshPro.dll", "TMPro",
+            "TMP_Text", "SetCharArray", {"System.Char[]", "System.Int32", "System.Int32"}));
         /* SQL 查询相关函数，不好用
         // 下面是 byte[] u8 string 转 std::string 的例子
         auto query = reinterpret_cast<UnityResolve::UnityType::Array<UnityResolve::UnityType::Byte>*>(mtd);
