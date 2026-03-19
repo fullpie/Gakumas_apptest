@@ -85,15 +85,15 @@ jobs:
     - name: Build with Gradle
       run: ./gradlew build
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v6
       id: upload_unsigned
       with:
         name: GakumasLocalify-Unsigned-apk
         path: app/build/outputs/apk/debug/app-debug.apk
-      continue-on-error: true
 
     - uses: r0adkll/sign-android-release@v1
       name: Sign app APK
+      if: ${{ secrets.KEYSTOREB64 != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
       id: sign_app
       with:
         releaseDirectory: app/build/outputs/apk/debug
@@ -103,11 +103,10 @@ jobs:
         keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
       env:
         BUILD_TOOLS_VERSION: "34.0.0"
-      continue-on-error: true
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v6
+      if: ${{ steps.sign_app.outputs.signedReleaseFile != '' }}
       id: upload_signed
       with:
         name: GakumasLocalify-Signed-apk
         path: ${{steps.sign_app.outputs.signedReleaseFile}}
-      continue-on-error: true
