@@ -9,8 +9,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
-      with:
-        submodules: recursive
 
     - name: Setup Java JDK
       uses: actions/setup-java@v5
@@ -28,9 +26,15 @@ jobs:
         echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
         npm install -g pnpm
 
-    - name: Update Submodules
+    - name: Fetch Translation Assets
       run: |
-        git submodule foreach --recursive 'git pull --rebase origin main --allow-unrelated-histories'
+        rm -rf app/src/main/assets/gakumas-local
+        git clone --depth 1 https://github.com/fullpie/GakumasTranslationData.git app/src/main/assets/gakumas-local
+      continue-on-error: true
+
+    - name: Update Nested Translation Submodules
+      run: |
+        git -C app/src/main/assets/gakumas-local submodule update --init --depth 1 --recursive
       continue-on-error: true
 
     - name: Pull Assets
