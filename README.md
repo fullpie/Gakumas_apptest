@@ -25,8 +25,8 @@
 
 # 翻译仓库贡献列表
 
-<a href="https://github.com/chinosk6/GakumasTranslationData">
-  <img src="https://contrib.rocks/image?repo=chinosk6/GakumasTranslationData" />
+<a href="https://github.com/fullpie/GakumasTranslationData">
+  <img src="https://contrib.rocks/image?repo=fullpie/GakumasTranslationData" />
 </a>
 
 

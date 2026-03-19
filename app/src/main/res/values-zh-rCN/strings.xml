@@ -104,5 +104,5 @@
     <string name="patch_finished">修补完成，是否开始安装？</string>
 
     <string name="about_contributors_asset_file">about_contributors_zh_cn.json</string>
-    <string name="default_assets_check_api">https://uma.chinosk6.cn/api/gkms_trans_data</string>
+    <string name="default_assets_check_api">https://api.github.com/repos/fullpie/GakumasTranslationData/releases/latest</string>
 </resources>

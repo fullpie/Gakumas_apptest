@@ -18,13 +18,13 @@
         {
             "name": "以及其他所有翻译贡献者",
             "links": [
-                {"name": "Github", "link": "https://github.com/chinosk6/GakumasTranslationData/graphs/contributors"}
+                {"name": "Github", "link": "https://github.com/fullpie/GakumasTranslationData/graphs/contributors"}
             ]
         }
     ],
     "contrib_img": {
         "plugin": "https://contrib.rocks/image?repo=chinosk6/gakuen-imas-localify",
-        "translation": "https://contrib.rocks/image?repo=chinosk6/GakumasTranslationData",
+        "translation": "https://contrib.rocks/image?repo=fullpie/GakumasTranslationData",
         "translations": [
             "https://contrib.rocks/image?repo=imas-tools/gakuen-adapted-translation-data",
             "https://contrib.rocks/image?repo=imas-tools/gakumas-generic-strings-translation"

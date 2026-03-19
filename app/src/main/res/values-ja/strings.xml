@@ -77,7 +77,7 @@
     <string name="contributors">貢献者</string>
     <string name="damping">ダンプ中</string>
     <string name="debug_settings">デバッグ設定</string>
-    <string name="default_assets_check_api">https://api.github.com/repos/NatsumeLS/Gakumas-Translation-Data-EN/releases/latest</string>
+    <string name="default_assets_check_api">https://api.github.com/repos/fullpie/GakumasTranslationData/releases/latest</string>
     <string name="default_error_message">入力が無効です</string>
     <string name="default_popup_window_title">ポップアップウィンドウ</string>
     <string name="del_remote_after_update">キャッシュファイルを更新後に削除</string>

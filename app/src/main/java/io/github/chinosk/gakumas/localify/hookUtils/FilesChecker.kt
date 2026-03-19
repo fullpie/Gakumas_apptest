@@ -31,7 +31,10 @@ object FilesChecker {
         val pluginVersion = getPluginVersion()
         Log.d("GakumasLocal", "installedVer: $installedVersion, pluginVer: $pluginVersion")
 
-        if (pluginVersion != installedVersion) {
+        val localFilesDir = getLocalFilesDir(filesDir)
+        val localFilesMissing = !localFilesDir.exists() || localFilesDir.listFiles().isNullOrEmpty()
+
+        if (localFilesMissing || pluginVersion != installedVersion) {
             updateFiles()
         }
     }
@@ -44,6 +47,11 @@ object FilesChecker {
         val pluginBasePath = File(filesDir, localizationFilesDir)
         if (!pluginBasePath.exists()) {
             pluginBasePath.mkdirs()
+        }
+
+        if (!cleanAssets(filesDir)) {
+            Log.e("GakumasLocal", "Failed to clean local assets before built-in update")
+            return
         }
 
         val assets = XModuleResources.createInstance(modulePath, null).assets
