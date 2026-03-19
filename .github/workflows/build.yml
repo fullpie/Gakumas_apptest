@@ -4,6 +4,10 @@ on: [push, pull_request, workflow_dispatch]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  KEYSTOREB64: ${{ secrets.KEYSTOREB64 }}
+  ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+  ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+  ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
 jobs:
   build:
@@ -93,14 +97,14 @@ jobs:
 
     - uses: r0adkll/sign-android-release@v1
       name: Sign app APK
-      if: ${{ secrets.KEYSTOREB64 != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
+      if: ${{ env.KEYSTOREB64 != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_PASSWORD != '' }}
       id: sign_app
       with:
         releaseDirectory: app/build/outputs/apk/debug
-        signingKeyBase64: ${{ secrets.KEYSTOREB64 }}
-        alias: ${{ secrets.ANDROID_KEY_ALIAS }}
-        keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        signingKeyBase64: ${{ env.KEYSTOREB64 }}
+        alias: ${{ env.ANDROID_KEY_ALIAS }}
+        keyStorePassword: ${{ env.ANDROID_KEYSTORE_PASSWORD }}
+        keyPassword: ${{ env.ANDROID_KEY_PASSWORD }}
       env:
         BUILD_TOOLS_VERSION: "34.0.0"
 
