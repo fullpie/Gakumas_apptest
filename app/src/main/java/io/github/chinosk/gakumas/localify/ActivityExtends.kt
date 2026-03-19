@@ -22,28 +22,6 @@ interface IHasConfigItems {
 
 interface IConfigurableActivity<T : Activity> : IHasConfigItems
 
-private val legacyTranslationApiUrls = setOf(
-    "https://uma.chinosk6.cn/api/gkms_trans_data",
-    "https://api.github.com/repos/NatsumeLS/Gakumas-Translation-Data-EN/releases/latest"
-)
-
-private fun migrateTranslationAssetSource(filesDir: File, programConfig: ProgramConfig, defaultApiUrl: String): Boolean {
-    val originalUrl = programConfig.useAPIAssetsURL
-    val shouldReplaceUrl = originalUrl.isEmpty() || originalUrl in legacyTranslationApiUrls
-
-    if (!shouldReplaceUrl) {
-        return false
-    }
-
-    programConfig.useAPIAssetsURL = defaultApiUrl
-
-    if (originalUrl.isNotEmpty() && originalUrl != defaultApiUrl) {
-        File(filesDir, "remote_files").deleteRecursively()
-    }
-
-    return originalUrl != programConfig.useAPIAssetsURL
-}
-
 
 fun <T> T.getConfigContent(): String where T : Activity {
     val configFile = File(filesDir, "gkms-config.json")
@@ -99,13 +77,8 @@ fun <T> T.loadConfig() where T : Activity, T : IHasConfigItems {
     }
 
     val defaultApiUrl = getString(R.string.default_assets_check_api)
-    val migrated = migrateTranslationAssetSource(filesDir, programConfig, defaultApiUrl)
     if (programConfig.useAPIAssetsURL.isEmpty()) {
         programConfig.useAPIAssetsURL = defaultApiUrl
-    }
-    if (migrated) {
-        val configFile = File(filesDir, "localify-config.json")
-        configFile.writeText(json.encodeToString(programConfig))
     }
 }
 
