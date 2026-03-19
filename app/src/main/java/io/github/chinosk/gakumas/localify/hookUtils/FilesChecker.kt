@@ -137,34 +137,33 @@ object FilesChecker {
         return file.delete()
     }
 
-    fun cleanAssets() {
-        val pluginBasePath = File(filesDir, localizationFilesDir)
-        val localFilesDir = File(pluginBasePath, "local-files")
+    private fun getLocalFilesDir(baseFilesDir: File): File {
+        val pluginBasePath = File(baseFilesDir, localizationFilesDir)
+        if (!pluginBasePath.exists()) {
+            pluginBasePath.mkdirs()
+        }
+        return File(pluginBasePath, "local-files")
+    }
 
-        val fontFile = File(localFilesDir, "gkamsZHFontMIX.otf")
-        val resourceDir = File(localFilesDir, "resource")
-        val genericTransDir = File(localFilesDir, "genericTrans")
-        val genericTransFile = File(localFilesDir, "generic.json")
-        val i18nFile = File(localFilesDir, "localization.json")
-        val masterTransDir = File(localFilesDir, "masterTrans")
+    fun cleanAssets(baseFilesDir: File): Boolean {
+        val localFilesDir = getLocalFilesDir(baseFilesDir)
 
-        if (fontFile.exists()) {
-            fontFile.delete()
+        if (localFilesDir.exists() && !deleteRecursively(localFilesDir)) {
+            Log.e("GakumasLocal", "Failed to delete old local-files directory: $localFilesDir")
+            return false
         }
-        if (deleteRecursively(resourceDir)) {
-            resourceDir.mkdirs()
+        if (!localFilesDir.exists() && !localFilesDir.mkdirs()) {
+            Log.e("GakumasLocal", "Failed to recreate local-files directory: $localFilesDir")
+            return false
         }
-        if (deleteRecursively(genericTransDir)) {
-            genericTransDir.mkdirs()
+        return true
+    }
+
+    fun cleanAssets(): Boolean {
+        if (!::filesDir.isInitialized) {
+            Log.e("GakumasLocal", "FilesChecker.filesDir is not initialized")
+            return false
         }
-        if (deleteRecursively(masterTransDir)) {
-            masterTransDir.mkdirs()
-        }
-        if (genericTransFile.exists()) {
-            genericTransFile.writeText("{}")
-        }
-        if (i18nFile.exists()) {
-            i18nFile.writeText("{}")
-        }
+        return cleanAssets(filesDir)
     }
 }

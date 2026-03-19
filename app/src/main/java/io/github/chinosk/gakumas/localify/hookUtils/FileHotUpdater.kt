@@ -156,6 +156,12 @@ object FileHotUpdater {
                 Log.d(TAG, "resourceVersion: $resourceVersion ($basePath)")
             }*/
 
+            if (!FilesChecker.cleanAssets(filesDir)) {
+                Log.e(TAG, "cleanAssets failed before zip update")
+                GakumasHookMain.showToast("Cleaning old translation files failed.")
+                return@updateFilesFromZip
+            }
+
             activity.contentResolver.openInputStream(zipFileUri).use {
                 it?.let {
                     unzip(it, File(filesDir, FilesChecker.localizationFilesDir).absolutePath,
