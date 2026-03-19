@@ -24,12 +24,42 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Setup Android Development Environment
-      uses: android-actions/setup-android@v3
-
-    - name: install dependencies
+    - name: Prepare Android SDK
       run: |
-        sdkmanager --install "cmake;3.22.1"
+        set -eux
+        ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+        ANDROID_SDK_ROOT="$ANDROID_HOME"
+        echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+        echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+        SDKMANAGER=""
+        for candidate in \
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+          "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" \
+          "$ANDROID_HOME/cmdline-tools/13.0/bin/sdkmanager" \
+          "$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
+        do
+          if [ -x "$candidate" ]; then
+            SDKMANAGER="$candidate"
+            break
+          fi
+        done
+
+        if [ -z "$SDKMANAGER" ]; then
+          echo "sdkmanager not found under $ANDROID_HOME"
+          exit 1
+        fi
+
+        echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+        yes | "$SDKMANAGER" --licenses > /dev/null || true
+        "$SDKMANAGER" --install \
+          "platform-tools" \
+          "platforms;android-34" \
+          "build-tools;34.0.0" \
+          "cmake;3.22.1" \
+          "ndk;26.3.11579264"
+
         echo "cmake.dir=$ANDROID_HOME/cmake/3.22.1" > local.properties
         echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
         python -m pip install --upgrade pip
@@ -46,6 +76,8 @@ jobs:
         curl -fL "$ZIP_URL" -o "$RUNNER_TEMP/gakumas_zhtw.zip"
         unzip -q "$RUNNER_TEMP/gakumas_zhtw.zip" -d app/src/main/assets/gakumas-local
         printf '%s' "$RELEASE_TAG" > app/src/main/assets/gakumas-local/version.txt
+        test -f app/src/main/assets/gakumas-local/version.txt
+        test -d app/src/main/assets/gakumas-local/local-files/resource
               
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
