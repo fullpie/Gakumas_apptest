@@ -9,6 +9,7 @@ import io.github.chinosk.gakumas.localify.models.GakumasConfig
 import io.github.chinosk.gakumas.localify.models.ProgramConfig
 import io.github.chinosk.gakumas.localify.models.ProgramConfigSerializer
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.encodeToString
 import java.io.File
 
 
