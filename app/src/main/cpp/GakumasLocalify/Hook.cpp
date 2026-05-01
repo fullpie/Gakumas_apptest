@@ -706,6 +706,14 @@ namespace GakumasLocal::HookMain {
         }
     }
 
+    DEFINE_HOOK(void*, ProduceCardMaster_GetData, (void* self, void* key, void* idx, void* mtd)) {
+        auto ret = ProduceCardMaster_GetData_Orig(self, key, idx, mtd);
+        if (ret) {
+            MasterLocal::LocalizeMasterItem(ret, "ProduceCard");
+        }
+        return ret;
+    }
+
     /*
     // 未使用的 Hook
     DEFINE_HOOK(void, MasterBase_GetAll, (void* self, UnityResolve::UnityType::Array<UnityResolve::UnityType::Byte>* getAllSQL,
@@ -1754,6 +1762,13 @@ namespace GakumasLocal::HookMain {
 
         ADD_HOOK(MessageExtensions_MergeFrom, Il2cppUtils::GetMethodPointer("Google.Protobuf.dll", "Google.Protobuf",
                                                                             "MessageExtensions", "MergeFrom", {"Google.Protobuf.IMessage", "System.ReadOnlySpan<System.Byte>"}));
+        auto ProduceCardMaster_klass = Il2cppUtils::GetClass("Assembly-CSharp.dll", "Campus.Common.Master", "ProduceCardMaster");
+        if (ProduceCardMaster_klass) {
+            auto ProduceCardMaster_GetData_mtd = Il2cppUtils::il2cpp_class_get_method_from_name(ProduceCardMaster_klass->address, "GetData", 2);
+            if (ProduceCardMaster_GetData_mtd) {
+                ADD_HOOK(ProduceCardMaster_GetData, ProduceCardMaster_GetData_mtd->methodPointer);
+            }
+        }
 
         /* // 此 block 为 MasterBase 相关的 hook，后来发现它们最后都会调用 MessageExtensions.MergeFrom 进行构造，遂停用。现留档以备用
         // ADD_HOOK(MasterBase_GetAll, Il2cppUtils::GetMethodPointer("quaunity-master-manager.Runtime.dll", "Qua.Master",
