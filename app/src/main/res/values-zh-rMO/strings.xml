@@ -109,5 +109,5 @@
 
     <string name="about_contributors_asset_file">about_contributors_zh_cn.json</string>
     <string name="default_assets_check_api">https://uma.chinosk6.cn/api/gkms_trans_data</string>
-    <string name="default_texture_assets_check_api">http://texture.gakumas.cn/api/gkms_texture_data</string>
+    <string name="default_texture_assets_check_api">https://texture.gakumas.cn/api/gkms_texture_data</string>
 </resources>

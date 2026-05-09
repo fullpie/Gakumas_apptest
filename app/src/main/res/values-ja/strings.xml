@@ -358,5 +358,5 @@ Xposed スコープは再パッチなしで動的に変更が可能です。
     <string name="texture_api_addr">テクスチャ API アドレス (GitHub 最新リリース API)</string>
     <string name="texture_resource_update">テクスチャリソースを更新</string>
     <string name="downloaded_texture_resource_version">ダウンロード済みテクスチャバージョン</string>
-    <string name="default_texture_assets_check_api">http://texture.gakumas.cn/api/gkms_texture_data</string>
+    <string name="default_texture_assets_check_api">https://texture.gakumas.cn/api/gkms_texture_data</string>
 </resources>
