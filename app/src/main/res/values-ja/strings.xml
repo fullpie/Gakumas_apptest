@@ -91,6 +91,7 @@
     <string name="error_a11y_label">エラー: 無効</string>
     <string name="error_icon_content_description">エラー</string>
     <string name="export_text">テキストをエクスポート</string>
+    <string name="dump_runtime_texture">実行時テクスチャをダンプ</string>
     <string name="exposed_dropdown_menu_content_description">ドロップダウンメニューを表示</string>
     <string name="fab_transformation_scrim_behavior">com.google.android.material.transformation.FabTransformationScrimBehavior</string>
     <string name="fab_transformation_sheet_behavior">com.google.android.material.transformation.FabTransformationSheetBehavior</string>
@@ -311,6 +312,7 @@ Xposed スコープは再パッチなしで動的に変更が可能です。
     <string name="range_start">範囲の開始</string>
     <string name="renderscale">RenderScale (0.5/0.59/0.67/0.77/1.0)</string>
     <string name="replace_font">フォントを置換する</string>
+    <string name="replace_texture">テクスチャを置換する</string>
     <string name="reserve_patched">パッチ済みの APK を予約する</string>
     <string name="resource_settings">リソース設定</string>
     <string name="resource_url">リソース URL</string>
@@ -352,4 +354,9 @@ Xposed スコープは再パッチなしで動的に変更が可能です。
     <string name="usescale">胸の大きさを使用する</string>
     <string name="very_high">最高</string>
     <string name="warning">警告</string>
+    <string name="check_texture_resource_from_api">API からテクスチャリソースの更新を確認</string>
+    <string name="texture_api_addr">テクスチャ API アドレス (GitHub 最新リリース API)</string>
+    <string name="texture_resource_update">テクスチャリソースを更新</string>
+    <string name="downloaded_texture_resource_version">ダウンロード済みテクスチャバージョン</string>
+    <string name="default_texture_assets_check_api">http://texture.gakumas.cn/api/gkms_texture_data</string>
 </resources>

@@ -49,14 +49,14 @@ fun MainUI(modifier: Modifier = Modifier, context: MainActivity? = null,
            previewData: GakumasConfig? = null) {
     val imagePainter = painterResource(R.drawable.bg_pattern)
     var versionInfo by remember {
-        mutableStateOf(context?.getVersion() ?: listOf("", "Unknown"))
+        mutableStateOf(context?.getVersion() ?: listOf("", "Unknown", "Unknown"))
     }
     // val config = getConfigState(context, previewData)
     val confirmState by getMainUIConfirmState(context, null)
     val programConfig by getProgramConfigState(context)
 
     LaunchedEffect(programConfig) {
-        versionInfo = context?.getVersion() ?: listOf("", "Unknown")
+        versionInfo = context?.getVersion() ?: listOf("", "Unknown", "Unknown")
     }
 
     Box(
@@ -79,6 +79,7 @@ fun MainUI(modifier: Modifier = Modifier, context: MainActivity? = null,
         ) {
             Text(text = "Gakumas Localify ${versionInfo[0]}", fontSize = 18.sp)
             Text(text = "Assets version: ${versionInfo[1]}", fontSize = 13.sp)
+            Text(text = "Texture version: ${versionInfo[2]}", fontSize = 13.sp)
 
             SettingsTabs(modifier, listOf(stringResource(R.string.about), stringResource(R.string.home),
                 stringResource(R.string.advanced_settings)),

@@ -19,6 +19,9 @@ data class ProgramConfig(
     var useAPIAssets: Boolean = false,
     var useAPIAssetsURL: String = "",
     var delRemoteAfterUpdate: Boolean = true,
+    var useAPITextureAssets: Boolean = false,
+    var useAPITextureAssetsURL: String = "",
+    var delTextureRemoteAfterUpdate: Boolean = true,
     var cleanLocalAssets: Boolean = false,
 
     // var localAPIAssetsVersion: String = "",

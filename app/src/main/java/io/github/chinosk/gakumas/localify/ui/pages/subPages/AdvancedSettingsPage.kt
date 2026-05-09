@@ -87,6 +87,10 @@ fun AdvanceSettingsPage(modifier: Modifier = Modifier,
                             v -> context?.onDumpTextChanged(v)
                     }
 
+                    GakuSwitch(modifier, stringResource(R.string.dump_runtime_texture), checked = config.value.dumpRuntimeTexture) {
+                            v -> context?.onDumpRuntimeTextureChanged(v)
+                    }
+
                     GakuSwitch(modifier, stringResource(R.string.force_export_resource), checked = config.value.forceExportResource) {
                             v -> context?.onForceExportResourceChanged(v)
                     }

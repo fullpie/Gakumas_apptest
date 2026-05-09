@@ -45,6 +45,7 @@ object FilesChecker {
         if (!pluginBasePath.exists()) {
             pluginBasePath.mkdirs()
         }
+        val skipBuiltInTexture2d = File(filesDir, "$localizationFilesDir/texture2d").exists()
 
         val assets = XModuleResources.createInstance(modulePath, null).assets
         fun forAllAssetFiles(
@@ -65,6 +66,12 @@ object FilesChecker {
             }
         }
         forAllAssetFiles(localizationFilesDir) { path, file ->
+            if ((path == "$localizationFilesDir/texture2d" ||
+                    path.startsWith("$localizationFilesDir/texture2d/")) &&
+                skipBuiltInTexture2d) {
+                return@forAllAssetFiles
+            }
+
             val outFile = File(filesDir, path)
             if (file == null) {
                 outFile.mkdirs()

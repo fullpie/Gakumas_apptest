@@ -6,6 +6,19 @@ plugins {
     id("kotlin-parcelize")
 }
 
+def sharedVersionFile = file("$projectDir/src/main/cpp/GakumasLocalify/VERSION")
+if (!sharedVersionFile.exists()) {
+    throw new GradleException("Shared version file not found: ${sharedVersionFile}")
+}
+def sharedVersionName = sharedVersionFile.text.trim()
+def sharedVersionMatcher = sharedVersionName =~ /^v?(\d+)\.(\d+)\.(\d+).*$/
+if (!sharedVersionMatcher.matches()) {
+    throw new GradleException("Invalid shared version: ${sharedVersionName}")
+}
+def sharedVersionCode = sharedVersionMatcher[0][1].toInteger() * 10000 +
+        sharedVersionMatcher[0][2].toInteger() * 100 +
+        sharedVersionMatcher[0][3].toInteger()
+
 android {
     namespace 'io.github.chinosk.gakumas.localify'
     compileSdk 34
@@ -15,8 +28,8 @@ android {
         applicationId "io.github.chinosk.gakumas.localify"
         minSdk 29
         targetSdk 34
-        versionCode 12
-        versionName "v3.2.0"
+        versionCode sharedVersionCode
+        versionName sharedVersionName
         buildConfigField "String", "VERSION_NAME", "\"${versionName}\""
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
