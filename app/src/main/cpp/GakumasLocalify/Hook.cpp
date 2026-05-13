@@ -873,7 +873,7 @@ namespace GakumasLocal::HookMain {
     DEFINE_HOOK(bool, UserIdolCardSkinCollection_Exists, (void* self, Il2cppString* id, void* mtd)) { // Live默认选择
         auto ret = UserIdolCardSkinCollection_Exists_Orig(self, id, mtd);
         // Log::DebugFmt("UserIdolCardSkinCollection_Exists: %s, ret: %d", id->ToString().c_str(), ret);
-        if (!Config::unlockAllLive) return ret;
+        if (!(Config::dbgMode && Config::unlockAllLive)) return ret;
 
         if (id) {
             std::string idStr = id->ToString();
@@ -884,7 +884,39 @@ namespace GakumasLocal::HookMain {
         return ret;
     }
 
+    void* GetMethodPointerByArgCount(const std::string& assemblyName, const std::string& nameSpaceName,
+                                     const std::string& className, const std::string& methodName,
+                                     size_t argsCount) {
+        auto klass = Il2cppUtils::GetClass(assemblyName, nameSpaceName, className);
+        if (!klass) return nullptr;
+
+        for (auto method : klass->methods) {
+            if (method && method->name == methodName && method->args.size() == argsCount) {
+                return method->function;
+            }
+        }
+
+        Log::ErrorFmt("GetMethodPointerByArgCount error: method %s::%s.%s with %zu args not found.",
+                      nameSpaceName.c_str(), className.c_str(), methodName.c_str(), argsCount);
+        return nullptr;
+    }
+
 #ifdef GKMS_WINDOWS
+    DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetReleaseDataAsync, (void* retstr, void* self, void* liveData, Il2cppString* characterId, bool isUnlocked, bool isNew, bool hasLiveSkin, void* ct, void* mtd)) {
+        if (Config::dbgMode && Config::unlockAllLive) {
+            isUnlocked = true;
+            hasLiveSkin = true;
+        }
+        PictureBookLiveThumbnailView_SetReleaseDataAsync_Orig(retstr, self, liveData, characterId, isUnlocked, isNew, hasLiveSkin, ct, mtd);
+    }
+
+    DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetUnReleaseDataAsync, (void* retstr, void* self, void* liveData, bool isExemptLive, Il2cppString* characterId, void* ct, void* mtd)) {
+        if (Config::dbgMode && Config::unlockAllLive) {
+            isExemptLive = true;
+        }
+        PictureBookLiveThumbnailView_SetUnReleaseDataAsync_Orig(retstr, self, liveData, isExemptLive, characterId, ct, mtd);
+    }
+
     DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetDataAsync, (void* retstr, void* self, void* liveData, Il2cppString* characterId, bool isReleased, bool isUnlocked, bool isNew, bool hasLiveSkin, void* ct, void* mtd)) {
         // Log::DebugFmt("PictureBookLiveThumbnailView_SetDataAsync: isReleased: %d, isUnlocked: %d, isNew: %d, hasLiveSkin: %d", isReleased, isUnlocked, isNew, hasLiveSkin);
         if (Config::dbgMode && Config::unlockAllLive) {
@@ -895,6 +927,21 @@ namespace GakumasLocal::HookMain {
         PictureBookLiveThumbnailView_SetDataAsync_Orig(retstr, self, liveData, characterId, isReleased, isUnlocked, isNew, hasLiveSkin, ct, mtd);
     }
 #else
+    DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetReleaseDataAsync, (void* self, void* liveData, Il2cppString* characterId, bool isUnlocked, bool isNew, bool hasLiveSkin, void* ct, void* mtd)) {
+        if (Config::dbgMode && Config::unlockAllLive) {
+            isUnlocked = true;
+            hasLiveSkin = true;
+        }
+        PictureBookLiveThumbnailView_SetReleaseDataAsync_Orig(self, liveData, characterId, isUnlocked, isNew, hasLiveSkin, ct, mtd);
+    }
+
+    DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetUnReleaseDataAsync, (void* self, void* liveData, bool isExemptLive, Il2cppString* characterId, void* ct, void* mtd)) {
+        if (Config::dbgMode && Config::unlockAllLive) {
+            isExemptLive = true;
+        }
+        PictureBookLiveThumbnailView_SetUnReleaseDataAsync_Orig(self, liveData, isExemptLive, characterId, ct, mtd);
+    }
+
     DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetDataAsync, (void* self, void* liveData, Il2cppString* characterId, bool isReleased, bool isUnlocked, bool isNew, bool hasLiveSkin, void* ct, void* mtd)) {
         // Log::DebugFmt("PictureBookLiveThumbnailView_SetDataAsync: isReleased: %d, isUnlocked: %d, isNew: %d, hasLiveSkin: %d", isReleased, isUnlocked, isNew, hasLiveSkin);
         if (Config::dbgMode && Config::unlockAllLive) {
@@ -1061,7 +1108,7 @@ namespace GakumasLocal::HookMain {
         void* ct, void* callOption, void* errorHandlerIl, Il2cppString* requestIdForResponseCache, void* mtd)) {
 
         // Log::DebugFmt("Produce_ViewPictureBookLiveAsync: %s - %s", musicId->ToString().c_str(), characterId->ToString().c_str());
-        if (Config::unlockAllLive) return getCompletedUniTask();
+        if (Config::dbgMode && Config::unlockAllLive) return getCompletedUniTask();
         return Produce_ViewPictureBookLiveAsync_Orig(retstr, musicId, characterId, ct, callOption, errorHandlerIl, requestIdForResponseCache, mtd);
     }
 #else
@@ -1069,7 +1116,7 @@ namespace GakumasLocal::HookMain {
         void* ct, void* callOption, void* errorHandlerIl, void* requestIdForResponseCache, void* mtd, void* wenhao)) {
 
         // Log::DebugFmt("Produce_ViewPictureBookLiveAsync: %s - %s", musicId->ToString().c_str(), characterId->ToString().c_str());
-        if (Config::unlockAllLive) return getCompletedUniTask();
+        if (Config::dbgMode && Config::unlockAllLive) return getCompletedUniTask();
         return Produce_ViewPictureBookLiveAsync_Orig(retstr, musicId, characterId, ct, callOption, errorHandlerIl, requestIdForResponseCache, mtd, wenhao);
     }
 #endif // GKMS_WINDOWS
@@ -1080,66 +1127,11 @@ namespace GakumasLocal::HookMain {
     DEFINE_HOOK(void*, PictureBookWindowPresenter_GetLiveMusics, (void* self, Il2cppString* charaId, void* mtd)) {
         // Log::DebugFmt("GetLiveMusics: %s", charaId->ToString().c_str());
 
-        if (Config::unlockAllLive) {
+        if (Config::dbgMode && Config::unlockAllLive) {
             PictureBookWindowPresenter_instance = self;
-            PictureBookWindowPresenter_charaId = charaId->ToString();
-
-            static auto PictureBookWindowPresenter_klass = Il2cppUtils::GetClass("Assembly-CSharp.dll", "Campus.OutGame",
-                                                                                 "PictureBookWindowPresenter");
-            static auto existsMusicIds_field = PictureBookWindowPresenter_klass->Get<UnityResolve::Field>("_existsMusicIds");
-            // auto existsMusicIds = Il2cppUtils::ClassGetFieldValue<UnityResolve::UnityType::List<Il2cppString*>*>(self, existsMusicIds_field);
-            auto existsMusicIds = Il2cppUtils::ClassGetFieldValue<UnityResolve::UnityType::Dictionary<Il2cppString*, UnityResolve::UnityType::List<Il2cppString*>>*>(self, existsMusicIds_field);
-
-            if (!existsMusicIds) {
-                static auto Dict_List_String_klass = Il2cppUtils::get_system_class_from_reflection_type_str(
-                    "System.Collections.Generic.Dictionary`2[System.String, System.Collections.Generic.List`1[System.String]]");
-                static auto List_String_klass = Il2cppUtils::get_system_class_from_reflection_type_str(
-                    "System.Collections.Generic.List`1[System.String]");
-                static auto List_String_ctor_mtd = Il2cppUtils::il2cpp_class_get_method_from_name(List_String_klass, ".ctor", 0);
-                static auto List_String_ctor = reinterpret_cast<void (*)(void*, void*)>(List_String_ctor_mtd->methodPointer);
-
-                auto fullIds = GetIdolMusicIdAll();
-
-                static auto Dict_List_String_ctor_mtd = Il2cppUtils::il2cpp_class_get_method_from_name(Dict_List_String_klass, ".ctor", 0);
-                static auto Dict_List_String_ctor = reinterpret_cast<void (*)(void*, void*)>(Dict_List_String_ctor_mtd->methodPointer);
-
-                auto newDict = UnityResolve::Invoke<void*>("il2cpp_object_new", Dict_List_String_klass);
-                Dict_List_String_ctor(newDict, Dict_List_String_ctor_mtd);
-                Il2cppUtils::Tools::CSDictEditor<Il2cppString*, void*> newDictEditor(newDict, Dict_List_String_klass);
-
-                // auto fullIds = GetIdolMusicIdAll();
-
-                for (auto& i : fullIds) {
-                    // Log::DebugFmt("GetLiveMusics - Add: %s", i.c_str());  // eg. music-all-amao-001, music-char-hski-001
-                    //newListEditor.Add(Il2cppString::New(i));
-					auto newList = UnityResolve::Invoke<void*>("il2cpp_object_new", List_String_klass);
-                    List_String_ctor(newList, List_String_ctor_mtd);
-					newDictEditor.Add(Il2cppString::New(i), newList);
-                }
-                Il2cppUtils::ClassSetFieldValue(self, existsMusicIds_field, newDict);
-                existsMusicIds = reinterpret_cast<decltype(existsMusicIds)>(newDict);
-                // Log::DebugFmt("GetLiveMusics - set end: %d", fullIds.size());
-            }
-
-            /*
-            Il2cppUtils::Tools::CSDictEditor<Il2cppString*, void*> dicCheckEditor(existsMusicIds, Dict_List_String_klass);
-            for (auto& i : fullIds) {
-				auto currKeyStr = Il2cppString::New(i);
-                void* currList;
-                if (dicCheckEditor.ContainsKey(currKeyStr)) {
-					currList = dicCheckEditor.get_Item(currKeyStr);
-                }
-                else {
-					currList = UnityResolve::Invoke<void*>("il2cpp_object_new", List_String_klass);
-                    List_String_ctor(currList, List_String_ctor_mtd);
-                }
-                Il2cppUtils::Tools::CSListEditor<Il2cppString*> currListEditor(currList);
-                if (!currListEditor.Contains(charaId)) {
-                    currListEditor.Add(charaId);
-                }
-                
-            }*/
-
+            PictureBookWindowPresenter_charaId = charaId ? charaId->ToString() : "";
+            Log::DebugFmt("GetLiveMusics passthrough: self: %p, charaId: %s",
+                          self, PictureBookWindowPresenter_charaId.c_str());
         }
 
         return PictureBookWindowPresenter_GetLiveMusics_Orig(self, charaId, mtd);
@@ -1182,6 +1174,18 @@ namespace GakumasLocal::HookMain {
          */
         // return PictureBookLiveSelectScreenPresenter_MoveLiveScene_Orig(self, produceLive, characterId, idolCardId, costumeId, costumeHeadId, mtd);
         return PictureBookLiveSelectScreenPresenter_MoveLiveScene_Orig(self, produceLive, isPlayCharacterFocusCamera, mtd);
+    }
+
+    DEFINE_HOOK(void, LiveSceneModel_set_IsLyricsActive, (void* self, bool value, void* mtd)) {
+        return LiveSceneModel_set_IsLyricsActive_Orig(self, Config::dbgMode && Config::unlockAllLive ? true : value, mtd);
+    }
+
+    DEFINE_HOOK(void, LiveScenePresenter_SetLyricsActive, (void* self, bool value, void* mtd)) {
+        return LiveScenePresenter_SetLyricsActive_Orig(self, Config::dbgMode && Config::unlockAllLive ? true : value, mtd);
+    }
+
+    DEFINE_HOOK(void, LiveSceneContentView_SetLyricsTextActive, (void* self, bool value, void* mtd)) {
+        return LiveSceneContentView_SetLyricsTextActive_Orig(self, Config::dbgMode && Config::unlockAllLive ? true : value, mtd);
     }
 
     // std::string lastMusicId;
@@ -1885,9 +1889,12 @@ namespace GakumasLocal::HookMain {
         }
 
         // 双端
-        ADD_HOOK(PictureBookLiveThumbnailView_SetDataAsync,
-            Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame.PictureBook",
-                "PictureBookLiveThumbnailView", "SetDataAsync", { "*", "*", "*", "*", "*" }));
+        ADD_HOOK(PictureBookLiveThumbnailView_SetReleaseDataAsync,
+            GetMethodPointerByArgCount("Assembly-CSharp.dll", "Campus.OutGame.PictureBook",
+                "PictureBookLiveThumbnailView", "SetReleaseDataAsync", 6));
+        ADD_HOOK(PictureBookLiveThumbnailView_SetUnReleaseDataAsync,
+            GetMethodPointerByArgCount("Assembly-CSharp.dll", "Campus.OutGame.PictureBook",
+                "PictureBookLiveThumbnailView", "SetUnReleaseDataAsync", 4));
 
         ADD_HOOK(PictureBookWindowPresenter_GetLiveMusics,
                  Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
@@ -1895,22 +1902,35 @@ namespace GakumasLocal::HookMain {
 
 #ifdef GKMS_WINDOWS
         // 跳过切歌Loading，安卓端会崩溃
-        ADD_HOOK(Produce_ViewPictureBookLiveAsync,
-            Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "",
-                "Produce", "ViewPictureBookLiveAsync"));
+        // Disabled after game updates because this async method signature is update-sensitive.
+        // ADD_HOOK(Produce_ViewPictureBookLiveAsync,
+        //     Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "",
+        //         "Produce", "ViewPictureBookLiveAsync"));
 #endif
-        ADD_HOOK(PictureBookLiveSelectScreenModel_ctor,
-                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
-                                               "PictureBookLiveSelectScreenModel", ".ctor"));
+        // ADD_HOOK(PictureBookLiveSelectScreenModel_ctor,
+        //          Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
+        //                                        "PictureBookLiveSelectScreenModel", ".ctor"));
 
-        ADD_HOOK(PictureBookLiveSelectScreenPresenter_MoveLiveScene,
-                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
-                                               "PictureBookLiveSelectScreenPresenter", "MoveLiveScene"));
+        // ADD_HOOK(PictureBookLiveSelectScreenPresenter_MoveLiveScene,
+        //          Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
+        //                                        "PictureBookLiveSelectScreenPresenter", "MoveLiveScene"));
 
         // 双端
-        ADD_HOOK(PictureBookLiveSelectScreenPresenter_OnSelectMusic,
-            Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
-                "PictureBookLiveSelectScreenPresenter", "OnSelectMusicAsync"));
+        ADD_HOOK(LiveSceneModel_set_IsLyricsActive,
+                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.Live",
+                                               "LiveSceneModel", "set_IsLyricsActive"));
+
+        ADD_HOOK(LiveScenePresenter_SetLyricsActive,
+                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.Live",
+                                               "LiveScenePresenter", "SetLyricsActive", { "*" }));
+
+        ADD_HOOK(LiveSceneContentView_SetLyricsTextActive,
+                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.Live",
+                                               "LiveSceneContentView", "SetLyricsTextActive", { "*" }));
+
+        // ADD_HOOK(PictureBookLiveSelectScreenPresenter_OnSelectMusic,
+        //     Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
+        //         "PictureBookLiveSelectScreenPresenter", "OnSelectMusicAsync"));
 
         ADD_HOOK(VLDOF_IsActive,
                  Il2cppUtils::GetMethodPointer("Unity.RenderPipelines.Universal.Runtime.dll", "VL.Rendering",
