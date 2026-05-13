@@ -2,8 +2,10 @@ package io.github.chinosk.gakumas.localify
 
 import android.app.Activity
 import android.content.Intent
+import android.util.Log
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import io.github.chinosk.gakumas.localify.mainUtils.TextureResourceUpdater
 import io.github.chinosk.gakumas.localify.mainUtils.json
 import io.github.chinosk.gakumas.localify.models.GakumasConfig
 import io.github.chinosk.gakumas.localify.models.ProgramConfig
@@ -77,6 +79,9 @@ fun <T> T.loadConfig() where T : Activity, T : IHasConfigItems {
     if (programConfig.useAPIAssetsURL.isEmpty()) {
         programConfig.useAPIAssetsURL = getString(R.string.default_assets_check_api)
     }
+    if (programConfig.useAPITextureAssetsURL.isEmpty()) {
+        programConfig.useAPITextureAssetsURL = getString(R.string.default_texture_assets_check_api)
+    }
 }
 
 fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
@@ -105,7 +110,7 @@ fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
         putExtra(
             "localData",
             getProgramConfigContent(listOf("transRemoteZipUrl", "useAPIAssetsURL",
-                "localAPIAssetsVersion", "p"), programConfig)
+                "useAPITextureAssetsURL", "localAPIAssetsVersion", "p"), programConfig)
         )
         putExtra("lVerName", version)
         flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -139,6 +144,31 @@ fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
         intent.putExtra("resource_file", dirUri)
         // intent.clipData = ClipData.newRawUri("resource_file", dirUri)
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+    }
+
+    val textureUpdateFile = TextureResourceUpdater.getCachedZipFile(this)
+    Log.i(TAG, "Texture cache before launch: replaceTexture=${config.replaceTexture}, " +
+            "useAPITextureAssets=${programConfig.useAPITextureAssets}, " +
+            "exists=${textureUpdateFile.exists()}, size=${if (textureUpdateFile.exists()) textureUpdateFile.length() else 0}, " +
+            "path=${textureUpdateFile.absolutePath}")
+    if (config.replaceTexture && textureUpdateFile.exists()) {
+        val textureUri = FileProvider.getUriForFile(
+            this,
+            "io.github.chinosk.gakumas.localify.fileprovider",
+            textureUpdateFile
+        )
+
+        grantUriPermission(
+            "com.bandainamcoent.idolmaster_gakuen",
+            textureUri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        intent.putExtra("texture_resource_file", textureUri)
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        Log.i(TAG, "Texture resource uri attached: $textureUri")
+    }
+    else {
+        Log.i(TAG, "Texture resource uri not attached.")
     }
 
     startActivity(intent)

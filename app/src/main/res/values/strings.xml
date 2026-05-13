@@ -3,6 +3,7 @@
     <string name="gakumas_localify">Gakumas Localify</string>
     <string name="enable_plugin">Enable Plugin (Not Hot Reloadable)</string>
     <string name="replace_font">Replace Font</string>
+    <string name="replace_texture">Replace Texture</string>
     <string name="lazy_init">Fast Initialization (Lazy loading)</string>
     <string name="enable_free_camera">Enable Free Camera</string>
     <string name="start_game">Start Game / Hot Reload Config</string>
@@ -17,6 +18,7 @@
     <string name="text_hook_test_mode">Text Hook Test Mode</string>
     <string name="useMasterDBTrans">Enable MasterDB Localization</string>
     <string name="export_text">Export Text</string>
+    <string name="dump_runtime_texture">Dump Runtime Texture</string>
     <string name="force_export_resource">Force Update Resource</string>
     <string name="login_as_ios">Login as iOS</string>
     <string name="max_high">Ultra</string>
@@ -86,6 +88,10 @@
     <string name="api_addr">API Address（Github Latest Release API）</string>
     <string name="check_update">Check</string>
     <string name="translation_resource_update">Translation Resource Update</string>
+    <string name="check_texture_resource_from_api">Check Texture Resource Update From API</string>
+    <string name="texture_api_addr">Texture API Address (Github Latest Release API)</string>
+    <string name="texture_resource_update">Texture Resource Update</string>
+    <string name="downloaded_texture_resource_version">Downloaded Texture Version</string>
 
     <string name="game_patch">Game Patch</string>
     <string name="patch_mode">Patch Mode</string>
@@ -105,4 +111,5 @@
 
     <string name="about_contributors_asset_file">about_contributors_en.json</string>
     <string name="default_assets_check_api">https://api.github.com/repos/NatsumeLS/Gakumas-Translation-Data-EN/releases/latest</string>
+    <string name="default_texture_assets_check_api">https://texture.gakumas.cn/api/gkms_texture_data</string>
 </resources>

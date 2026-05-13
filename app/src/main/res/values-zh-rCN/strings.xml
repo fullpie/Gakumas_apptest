@@ -3,6 +3,7 @@
     <string name="gakumas_localify">Gakumas Localify</string>
     <string name="enable_plugin">启用插件 (不可热重载)</string>
     <string name="replace_font">替换字体</string>
+    <string name="replace_texture">替换贴图</string>
     <string name="lazy_init">快速初始化（懒加载配置）</string>
     <string name="enable_free_camera">启用自由视角（可热重载; 需使用实体键盘）</string>
     <string name="start_game">以上述配置启动游戏/重载配置</string>
@@ -17,6 +18,7 @@
     <string name="text_hook_test_mode">文本 hook 测试模式</string>
     <string name="useMasterDBTrans">使用 MasterDB 本地化</string>
     <string name="export_text">导出文本</string>
+    <string name="dump_runtime_texture">导出运行时贴图</string>
     <string name="force_export_resource">启动后强制导出资源</string>
     <string name="login_as_ios">以 iOS 登陆</string>
     <string name="max_high">极高</string>
@@ -86,6 +88,10 @@
     <string name="api_addr">API 地址（Github Latest Release API）</string>
     <string name="check_update">检查更新</string>
     <string name="translation_resource_update">翻译资源更新</string>
+    <string name="check_texture_resource_from_api">从服务器检查贴图资源更新</string>
+    <string name="texture_api_addr">贴图 API 地址（Github Latest Release API）</string>
+    <string name="texture_resource_update">贴图资源更新</string>
+    <string name="downloaded_texture_resource_version">已下载贴图资源版本</string>
 
     <string name="game_patch">游戏修补</string>
     <string name="patch_mode">修补模式</string>
@@ -105,4 +111,5 @@
 
     <string name="about_contributors_asset_file">about_contributors_zh_cn.json</string>
     <string name="default_assets_check_api">https://uma.chinosk6.cn/api/gkms_trans_data</string>
+    <string name="default_texture_assets_check_api">https://texture.gakumas.cn/api/gkms_texture_data</string>
 </resources>

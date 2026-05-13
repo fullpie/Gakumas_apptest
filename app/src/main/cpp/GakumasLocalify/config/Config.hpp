@@ -7,11 +7,13 @@ namespace GakumasLocal::Config {
     extern bool enabled;
     extern bool lazyInit;
     extern bool replaceFont;
+    extern bool replaceTexture;
     extern bool forceExportResource;
     extern int gameOrientation;
     extern bool textTest;
     extern bool useMasterTrans;
     extern bool dumpText;
+    extern bool dumpRuntimeTexture;
     extern bool enableFreeCamera;
     extern int targetFrameRate;
     extern bool unlockAllLive;

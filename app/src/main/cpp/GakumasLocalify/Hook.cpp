@@ -1,4 +1,5 @@
 #include "Hook.h"
+#include "HookTexture.h"
 #include "Plugin.h"
 #include "Log.h"
 #include "../deps/UnityResolve/UnityResolve.hpp"
@@ -13,6 +14,11 @@
 #include <thread>
 #include <map>
 #include <set>
+#include <list>
+#include <vector>
+#include <string_view>
+#include <utility>
+#include <cctype>
 #include "../platformDefine.hpp"
 
 #ifdef GKMS_WINDOWS
@@ -262,10 +268,21 @@ namespace GakumasLocal::HookMain {
 
     std::unordered_map<void*, std::string> loadHistory{};
 
+
+    DEFINE_HOOK(void*, AssetBundle_LoadAsset, (void* self, Il2cppString* name, void* type)) {
+        auto result = AssetBundle_LoadAsset_Orig(self, name, type);
+        if (name) {
+            result = ReplaceTextureOrSpriteAsset(result, name->ToString());
+        }
+        return result;
+    }
+
     DEFINE_HOOK(void*, AssetBundle_LoadAssetAsync, (void* self, Il2cppString* name, void* type)) {
         // Log::InfoFmt("AssetBundle_LoadAssetAsync: %s, type: %s", name->ToString().c_str());
         auto ret = AssetBundle_LoadAssetAsync_Orig(self, name, type);
-        loadHistory.emplace(ret, name->ToString());
+        if (ret && name) {
+            loadHistory.emplace(ret, name->ToString());
+        }
         return ret;
     }
 
@@ -277,7 +294,28 @@ namespace GakumasLocal::HookMain {
 
             // const auto assetClass = Il2cppUtils::get_class_from_instance(result);
             // Log::InfoFmt("AssetBundleRequest_GetResult: %s, type: %s", name.c_str(), static_cast<Il2CppClassHead*>(assetClass)->name);
+            result = ReplaceTextureOrSpriteAsset(result, name);
         }
+        return result;
+    }
+
+    DEFINE_HOOK(void*, AssetBundleRequest_get_asset, (void* self)) {
+        std::string name;
+        if (const auto iter = loadHistory.find(self); iter != loadHistory.end()) {
+            name = iter->second;
+            loadHistory.erase(iter);
+        }
+
+        auto result = AssetBundleRequest_get_asset_Orig(self);
+        if (!name.empty()) {
+            result = ReplaceTextureOrSpriteAsset(result, name);
+        }
+        return result;
+    }
+
+    DEFINE_HOOK(void*, AssetBundleRequest_get_allAssets, (void* self)) {
+        auto result = AssetBundleRequest_get_allAssets_Orig(self);
+        ReplaceAllAssetTextures(result);
         return result;
     }
 
@@ -285,8 +323,31 @@ namespace GakumasLocal::HookMain {
         auto ret = Resources_Load_Orig(path, systemTypeInstance);
 
         // if (ret) Log::DebugFmt("Resources_Load: %s, type: %s", path->ToString().c_str(), Il2cppUtils::get_class_from_instance(ret)->name);
+        if (path) {
+            ret = ReplaceTextureOrSpriteAsset(ret, path->ToString());
+        }
 
         return ret;
+    }
+
+    DEFINE_HOOK(void*, Sprite_get_texture, (void* self)) {
+        return ReplaceSpriteTexture(Sprite_get_texture_Orig(self));
+    }
+
+    DEFINE_HOOK(void, Image_set_sprite, (void* self, void* sprite)) {
+        Image_set_sprite_Orig(self, ReplaceSpriteAssetByTextureName(sprite));
+    }
+
+    DEFINE_HOOK(void, Image_set_overrideSprite, (void* self, void* sprite)) {
+        Image_set_overrideSprite_Orig(self, ReplaceSpriteAssetByTextureName(sprite));
+    }
+
+    DEFINE_HOOK(void, CanvasRenderer_SetTexture, (void* self, void* texture)) {
+        CanvasRenderer_SetTexture_Orig(self, ReplaceTextureOrSpriteByObjectName(texture));
+    }
+
+    DEFINE_HOOK(void, SpriteRenderer_set_sprite, (void* self, void* sprite)) {
+        SpriteRenderer_set_sprite_Orig(self, ReplaceSpriteAssetByTextureName(sprite));
     }
 
     DEFINE_HOOK(void, I18nHelper_SetUpI18n, (void* self, Il2cppString* lang, Il2cppString* localizationText, int keyComparison)) {
@@ -1688,12 +1749,18 @@ namespace GakumasLocal::HookMain {
             UnityResolve::Mode::Il2Cpp, Config::lazyInit);
 #endif
 
-        ADD_HOOK(AssetBundle_LoadAssetAsync, Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.AssetBundle::LoadAssetAsync_Internal(System.String,System.Type)"));
-        ADD_HOOK(AssetBundleRequest_GetResult, Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.AssetBundleRequest::GetResult()"));
-        ADD_HOOK(Resources_Load, Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.ResourcesAPIInternal::Load(System.String,System.Type)"));
+        // Temporarily isolate texture replacement to CanvasRenderer.SetTexture only.
+        // ADD_HOOK(AssetBundle_LoadAsset, ResolveAssetBundleLoadAssetHookAddress());
+        // ADD_HOOK(AssetBundle_LoadAssetAsync, ResolveAssetBundleLoadAssetAsyncHookAddress());
+        // ADD_HOOK(AssetBundleRequest_GetResult, ResolveAssetBundleRequestResultHookAddress());
+        // ADD_HOOK(AssetBundleRequest_get_asset, ResolveAssetBundleRequestAssetHookAddress());
+        // ADD_HOOK(AssetBundleRequest_get_allAssets, ResolveAssetBundleRequestAllAssetsHookAddress());
+        // ADD_HOOK(Resources_Load, ResolveResourcesLoadHookAddress());
+        // ADD_HOOK(Sprite_get_texture, ResolveSpriteGetTextureHookAddress());
+        // ADD_HOOK(Image_set_sprite, Il2cppUtils::GetMethodPointer("UnityEngine.UI.dll", "UnityEngine.UI", "Image", "set_sprite"));
+        // ADD_HOOK(Image_set_overrideSprite, Il2cppUtils::GetMethodPointer("UnityEngine.UI.dll", "UnityEngine.UI", "Image", "set_overrideSprite"));
+        ADD_HOOK(CanvasRenderer_SetTexture, Il2cppUtils::GetMethodPointer("UnityEngine.UIModule.dll", "UnityEngine", "CanvasRenderer", "SetTexture", {"UnityEngine.Texture"}));
+        // ADD_HOOK(SpriteRenderer_set_sprite, Il2cppUtils::GetMethodPointer("UnityEngine.CoreModule.dll", "UnityEngine", "SpriteRenderer", "set_sprite"));
 
         ADD_HOOK(I18nHelper_SetUpI18n, Il2cppUtils::GetMethodPointer("quaunity-ui.Runtime.dll", "Qua.UI",
                                                                      "I18nHelper", "SetUpI18n"));
@@ -1987,7 +2054,7 @@ namespace GakumasLocal::HookMain {
             UnityResolveProgress::startInit = true;
             UnityResolveProgress::assembliesProgress.total = 2;
             UnityResolveProgress::assembliesProgress.current = 1;
-            UnityResolveProgress::classProgress.total = 36;
+            UnityResolveProgress::classProgress.total = 43;
             UnityResolveProgress::classProgress.current = 0;
         }
 
