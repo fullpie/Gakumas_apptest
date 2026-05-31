@@ -247,6 +247,96 @@ namespace GakumasLocal::Local {
         genericText.insert(appendsText.begin(), appendsText.end());
     }
 
+#ifndef GKMS_WINDOWS
+    bool IsAsciiDigit(const char ch) {
+        return ch >= '0' && ch <= '9';
+    }
+
+    std::vector<size_t> GetAndroidDuplicatedPlusDigitPositions(const std::string& text) {
+        std::vector<size_t> positions{};
+
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (text[i] == '+' && i + 2 < text.size() &&
+                text[i + 1] >= '1' && text[i + 1] <= '9' &&
+                text[i + 1] == text[i + 2]) {
+                const auto next = i + 3 < text.size() ? text[i + 3] : '\0';
+
+                if (!IsAsciiDigit(next) && next != '%') {
+                    positions.push_back(i);
+                }
+            }
+        }
+
+        return positions;
+    }
+
+    size_t CountBits(size_t value) {
+        size_t count = 0;
+        while (value != 0) {
+            count += value & 1U;
+            value >>= 1U;
+        }
+
+        return count;
+    }
+
+    std::string BuildAndroidDigitFallbackCandidate(const std::string& text,
+                                                   const std::vector<size_t>& positions,
+                                                   const size_t collapseMask) {
+        std::string candidate{};
+        candidate.reserve(text.size());
+        size_t positionIndex = 0;
+
+        for (size_t i = 0; i < text.size();) {
+            if (positionIndex < positions.size() && positions[positionIndex] == i) {
+                const auto shouldCollapse = (collapseMask & (1ULL << positionIndex)) != 0;
+                candidate.push_back('+');
+                candidate.push_back(text[i + 1]);
+                if (!shouldCollapse) {
+                    candidate.push_back(text[i + 2]);
+                }
+                i += 3;
+                ++positionIndex;
+                continue;
+            }
+
+            candidate.push_back(text[i]);
+            ++i;
+        }
+
+        return candidate;
+    }
+
+    bool GetGenericTextAfterAndroidDigitFallback(const std::string& origText, std::string* newStr) {
+        // Some Android TMP hooks can expose single signed digits as doubled text.
+        const auto positions = GetAndroidDuplicatedPlusDigitPositions(origText);
+        if (positions.empty() || positions.size() > 12) {
+            return false;
+        }
+
+        const size_t maskLimit = 1ULL << positions.size();
+        for (size_t collapseCount = positions.size(); collapseCount > 0; --collapseCount) {
+            for (size_t mask = 1; mask < maskLimit; ++mask) {
+                if (CountBits(mask) != collapseCount) {
+                    continue;
+                }
+
+                const auto candidate = BuildAndroidDigitFallbackCandidate(origText, positions, mask);
+                if (candidate == origText) {
+                    continue;
+                }
+
+                if (const auto iter = genericText.find(candidate); iter != genericText.end()) {
+                    *newStr = iter->second;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+#endif
+
     bool ReplaceString(std::string* str, const std::string& oldSubstr, const std::string& newSubstr) {
         size_t pos = str->find(oldSubstr);
         if (pos != std::string::npos) {
@@ -533,6 +623,11 @@ namespace GakumasLocal::Local {
             *newStr = iter->second;
             return true;
         }
+#ifndef GKMS_WINDOWS
+        if (GetGenericTextAfterAndroidDigitFallback(origText, newStr)) {
+            return true;
+        }
+#endif
         // 不翻译翻译过的文本
         if (translatedText.contains(origText)) {
             return false;
