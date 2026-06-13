@@ -3,6 +3,7 @@
     <string name="gakumas_localify">Gakumas Localify</string>
     <string name="enable_plugin">啟用插件 (不可熱重載)</string>
     <string name="replace_font">替換字體</string>
+    <string name="replace_texture">替換貼圖</string>
     <string name="lazy_init">快速初始化（懶人設定）</string>
     <string name="enable_free_camera">啟用自由視角（可熱重載; 需使用實體鍵盤）</string>
     <string name="start_game">以上述設定啟動遊戲/重載設定</string>

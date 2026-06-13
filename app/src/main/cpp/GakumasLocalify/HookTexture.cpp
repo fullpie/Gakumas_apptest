@@ -20,6 +20,7 @@
 namespace GakumasLocal::HookMain
 {
     using Il2cppString = UnityResolve::UnityType::String;
+    using Il2CppGCHandle = void*;
 
     extern void* (*Sprite_get_texture_Orig)(void* self);
 
@@ -27,7 +28,7 @@ namespace GakumasLocal::HookMain
 
     Il2cppUtils::Il2CppClassHead* Texture2DClass = nullptr;
     Il2cppUtils::Il2CppClassHead* SpriteClass = nullptr;
-    std::unordered_map<std::string, uint32_t> LoadedLocalTextureHandles{};
+    std::unordered_map<std::string, Il2CppGCHandle> LoadedLocalTextureHandles{};
     std::unordered_set<std::string> AppliedLocalTextureKeys{};
 
     Il2cppUtils::Il2CppClassHead* GetTexture2DClass() {
@@ -73,9 +74,35 @@ namespace GakumasLocal::HookMain
     Il2cppString* GetObjectName(void* obj) {
         if (!obj) return nullptr;
 
-        static auto Object_GetName = reinterpret_cast<Il2cppString * (*)(void*)>(
-            Il2cppUtils::il2cpp_resolve_icall("UnityEngine.Object::GetName(UnityEngine.Object)"));
-        return Object_GetName ? Object_GetName(obj) : nullptr;
+        static const auto Object_get_name =
+            Il2cppUtils::GetMethod(
+                "UnityEngine.CoreModule.dll",
+                "UnityEngine",
+                "Object",
+                "get_name"
+            );
+
+        if (!Object_get_name ||
+            !Object_get_name->function) {
+            Log::Error("Cannot find UnityEngine.Object.get_name");
+            return nullptr;
+        }
+
+        using ObjectGetNameFn =
+            Il2cppString* (*)(
+                void* self,
+                void* method
+            );
+
+        const auto getName =
+            reinterpret_cast<ObjectGetNameFn>(
+                Object_get_name->function
+            );
+
+        return getName(
+            obj,
+            Object_get_name->address
+        );
     }
 
     void SetDontUnloadUnusedAsset(void* obj) {
@@ -494,6 +521,57 @@ namespace GakumasLocal::HookMain
         }
     }
 
+    bool LoadImageFromByteArray(
+        void* texture,
+        void* byteArray,
+        bool markNonReadable
+    ) {
+        if (!texture || !byteArray) {
+            return false;
+        }
+
+        static const auto LoadImageMethod =
+            Il2cppUtils::GetMethod(
+                "UnityEngine.ImageConversionModule.dll",
+                "UnityEngine",
+                "ImageConversion",
+                "LoadImage",
+                {
+                    "UnityEngine.Texture2D",
+                    "System.Byte[]",
+                    "System.Boolean"
+                }
+            );
+
+        if (!LoadImageMethod ||
+            !LoadImageMethod->function) {
+            Log::Error(
+                "Cannot find ImageConversion.LoadImage(Texture2D, Byte[], Boolean)"
+            );
+            return false;
+        }
+
+        using LoadImageFn =
+            bool (*)(
+                void* texture,
+                void* byteArray,
+                bool markNonReadable,
+                void* method
+            );
+
+        const auto loadImage =
+            reinterpret_cast<LoadImageFn>(
+                LoadImageMethod->function
+            );
+
+        return loadImage(
+            texture,
+            byteArray,
+            markNonReadable,
+            LoadImageMethod->address
+        );
+    }
+
     void* LoadLocalTexture2D(const std::filesystem::path& path) {
         if (!std::filesystem::is_regular_file(path)) return nullptr;
 
@@ -516,33 +594,14 @@ namespace GakumasLocal::HookMain
             const auto ctor = textureClass ? Il2cppUtils::il2cpp_class_get_method_from_name(textureClass, ".ctor", 2) : nullptr;
             return ctor ? reinterpret_cast<void (*)(void*, int, int)>(ctor->methodPointer) : nullptr;
         }();
-        static auto ImageConversion_LoadImage = [] {
-            using LoadImageFn = bool (*)(void*, void*, bool);
-            if (const auto icall = Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.ImageConversion::LoadImage(UnityEngine.Texture2D,System.Byte[],System.Boolean)")) {
-                return reinterpret_cast<LoadImageFn>(icall);
-            }
-
-            for (const auto& assemblyName : {"UnityEngine.ImageConversionModule.dll", "UnityEngine.CoreModule.dll"}) {
-                const auto assembly = UnityResolve::Get(assemblyName);
-                const auto imageConversionClass = assembly ? assembly->Get("ImageConversion", "UnityEngine") : nullptr;
-                const auto method = imageConversionClass
-                    ? Il2cppUtils::il2cpp_class_get_method_from_name(imageConversionClass->address, "LoadImage", 3)
-                    : nullptr;
-                if (method) {
-                    return reinterpret_cast<LoadImageFn>(method->methodPointer);
-                }
-            }
-            return static_cast<LoadImageFn>(nullptr);
-        }();
         static auto File_ReadAllBytes = [] {
             const auto fileClass = Il2cppUtils::GetClass("mscorlib.dll", "System.IO", "File");
             const auto method = fileClass ? Il2cppUtils::il2cpp_class_get_method_from_name(fileClass->address, "ReadAllBytes", 1) : nullptr;
             return method ? reinterpret_cast<void* (*)(Il2cppString*)>(method->methodPointer) : nullptr;
         }();
 
-        if (!Texture2D_ctor || !ImageConversion_LoadImage || !File_ReadAllBytes) {
-            Log::Error("LoadLocalTexture2D failed: Unity Texture2D/ImageConversion/File API not found.");
+        if (!Texture2D_ctor || !File_ReadAllBytes) {
+            Log::Error("LoadLocalTexture2D failed: Unity Texture2D/File API not found.");
             return nullptr;
         }
 
@@ -551,19 +610,28 @@ namespace GakumasLocal::HookMain
 
         const auto texture = UnityResolve::Invoke<void*>("il2cpp_object_new", textureClass);
         Texture2D_ctor(texture, 2, 2);
-        if (!ImageConversion_LoadImage(texture, fileBytes, false)) {
+        if (!LoadImageFromByteArray(texture, fileBytes, false)) {
             Log::ErrorFmt("LoadLocalTexture2D failed: %s", path.string().c_str());
             return nullptr;
         }
 
         SetDontUnloadUnusedAsset(texture);
-        LoadedLocalTextureHandles.emplace(cacheKey, UnityResolve::Invoke<uint32_t>("il2cpp_gchandle_new", texture, false));
+        const auto textureHandle = UnityResolve::Invoke<Il2CppGCHandle>("il2cpp_gchandle_new", texture, false);
+        if (!textureHandle) {
+            Log::ErrorFmt("Cannot create texture GCHandle: %s", path.string().c_str());
+            return nullptr;
+        }
+        LoadedLocalTextureHandles.emplace(cacheKey, textureHandle);
         Log::InfoFmt("Texture replaced from local file: %s", path.string().c_str());
         return texture;
     }
 
     void* LoadLocalTexture2DFromCandidates(const std::vector<std::filesystem::path>& candidates) {
         for (const auto& candidate : candidates) {
+            if (!std::filesystem::is_regular_file(candidate)) {
+                continue;
+            }
+
             if (auto texture = LoadLocalTexture2D(candidate)) {
                 return texture;
             }
@@ -578,40 +646,21 @@ namespace GakumasLocal::HookMain
             + "|" + std::to_string(reinterpret_cast<std::uintptr_t>(texture2D));
         if (AppliedLocalTextureKeys.contains(cacheKey)) return true;
 
-        static auto ImageConversion_LoadImage = [] {
-            using LoadImageFn = bool (*)(void*, void*, bool);
-            if (const auto icall = Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.ImageConversion::LoadImage(UnityEngine.Texture2D,System.Byte[],System.Boolean)")) {
-                return reinterpret_cast<LoadImageFn>(icall);
-            }
-
-            for (const auto& assemblyName : {"UnityEngine.ImageConversionModule.dll", "UnityEngine.CoreModule.dll"}) {
-                const auto assembly = UnityResolve::Get(assemblyName);
-                const auto imageConversionClass = assembly ? assembly->Get("ImageConversion", "UnityEngine") : nullptr;
-                const auto method = imageConversionClass
-                    ? Il2cppUtils::il2cpp_class_get_method_from_name(imageConversionClass->address, "LoadImage", 3)
-                    : nullptr;
-                if (method) {
-                    return reinterpret_cast<LoadImageFn>(method->methodPointer);
-                }
-            }
-            return static_cast<LoadImageFn>(nullptr);
-        }();
         static auto File_ReadAllBytes = [] {
             const auto fileClass = Il2cppUtils::GetClass("mscorlib.dll", "System.IO", "File");
             const auto method = fileClass ? Il2cppUtils::il2cpp_class_get_method_from_name(fileClass->address, "ReadAllBytes", 1) : nullptr;
             return method ? reinterpret_cast<void* (*)(Il2cppString*)>(method->methodPointer) : nullptr;
         }();
 
-        if (!ImageConversion_LoadImage || !File_ReadAllBytes) {
-            Log::Error("ApplyLocalImageToTexture2D failed: Unity ImageConversion/File API not found.");
+        if (!File_ReadAllBytes) {
+            Log::Error("ApplyLocalImageToTexture2D failed: Unity File API not found.");
             return false;
         }
 
         const auto fileBytes = File_ReadAllBytes(Il2cppString::New(path.string()));
         if (!fileBytes) return false;
 
-        if (!ImageConversion_LoadImage(texture2D, fileBytes, false)) {
+        if (!LoadImageFromByteArray(texture2D, fileBytes, false)) {
             Log::ErrorFmt("ApplyLocalImageToTexture2D failed: %s", path.string().c_str());
             return false;
         }
@@ -736,6 +785,16 @@ namespace GakumasLocal::HookMain
         return texture2D;
     }
 
+    // Unity 6 compatibility warning:
+    // The resolver functions below currently mix two possible target ABIs:
+    //   - il2cpp_resolve_icall(): native icall signature
+    //   - GetMethodPointer(): managed IL2CPP methodPointer, normally with a
+    //     trailing MethodInfo* argument
+    //
+    // The corresponding AssetBundle / Resources / Sprite hooks in Hook.cpp are
+    // intentionally disabled. They must not be restored until the resolver and
+    // hook declarations distinguish these ABI forms, or until the managed
+    // fallback is removed and a verified icall is required.
     void* ResolveSpriteGetTextureHookAddress() {
         if (const auto addr = Il2cppUtils::il2cpp_resolve_icall("UnityEngine.Sprite::get_texture(UnityEngine.Sprite)")) {
             return addr;
