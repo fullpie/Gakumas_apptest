@@ -216,9 +216,18 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf ls_patched
+          set +e
           java -jar app/libs/lspatch.jar -l 2 --manager "$GAME_APK_NAME" -o ls_patched
+          lspatch_rc=$?
+          set -e
           patched="$(find ls_patched -type f -name '*.apk' | head -n 1)"
-          test -n "$patched"
+          if [ -z "$patched" ]; then
+            echo "LSPatch did not produce an APK. Exit code: $lspatch_rc"
+            exit "$lspatch_rc"
+          fi
+          if [ "$lspatch_rc" -ne 0 ]; then
+            echo "::warning::LSPatch exited with $lspatch_rc but produced $patched; continuing."
+          fi
           mv "$patched" "$PATCHED_APK_NAME"
           unzip -t "$PATCHED_APK_NAME" >/dev/null
 
