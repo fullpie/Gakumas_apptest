@@ -608,6 +608,14 @@ class PatchActivity : ComponentActivity() {
             return "'${value.replace("'", "'\"'\"'")}'"
         }
 
+        private fun sessionSplitName(index: Int, fileName: String): String {
+            val baseName = fileName
+                .removePrefix("patch-")
+                .removeSuffix(".apk")
+                .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            return baseName.ifBlank { "split_$index" }
+        }
+
         fun saveFilesToDownload(context: PatchActivity, apkFiles: List<File>, targetFolder: String,
                                 isMove: Boolean): List<String>? {
             val ret: MutableList<String> = mutableListOf()
@@ -662,6 +670,7 @@ class PatchActivity : ComponentActivity() {
                         uninstallShell.destroy()
                     }
 
+                    val apkSizes = apkFiles.map { it.length() }
                     val savedFileNames = saveFilesToDownload(context, apkFiles, "gkms_local_patch", !reservePatchFiles)
                     if (savedFileNames == null) {
                         status = PackageInstaller.STATUS_FAILURE
@@ -688,10 +697,39 @@ class PatchActivity : ComponentActivity() {
                     }
 
                     val installFiles = movedFiles.joinToString(" ")
-                    val installCommand = if (savedFileNames.size == 1) "pm install -r" else "pm install-multiple -r"
+                    val installCommand = if (savedFileNames.size == 1) {
+                        "pm install -r ${movedFiles.single()}"
+                    }
+                    else {
+                        val totalSize = apkSizes.sum()
+                        val writeCommands = savedFileNames.mapIndexed { index, file ->
+                            val splitName = shellQuote(sessionSplitName(index, file))
+                            val targetFile = shellQuote("$installDS/$file")
+                            "\$pkgcmd install-write -S ${apkSizes[index]} \"\$session\" $splitName $targetFile"
+                        }.joinToString(" && ")
+
+                        "{ pkgcmd=pm; " +
+                                "create_out=\$(\$pkgcmd install-create -r -S $totalSize 2>&1); " +
+                                "echo \"\$create_out\"; " +
+                                "session=\$(printf '%s\\n' \"\$create_out\" | sed -n 's/.*\\[\\([0-9][0-9]*\\)\\].*/\\1/p'); " +
+                                "if [ -z \"\$session\" ]; then " +
+                                "pkgcmd='cmd package'; " +
+                                "create_out=\$(\$pkgcmd install-create -r -S $totalSize 2>&1); " +
+                                "echo \"\$create_out\"; " +
+                                "session=\$(printf '%s\\n' \"\$create_out\" | sed -n 's/.*\\[\\([0-9][0-9]*\\)\\].*/\\1/p'); " +
+                                "fi; " +
+                                "if [ -z \"\$session\" ]; then " +
+                                "echo 'install-create failed'; false; " +
+                                "else " +
+                                "$writeCommands && \$pkgcmd install-commit \"\$session\"; " +
+                                "install_rc=\$?; " +
+                                "if [ \$install_rc -ne 0 ]; then \$pkgcmd install-abandon \"\$session\" >/dev/null 2>&1 || true; fi; " +
+                                "[ \$install_rc -eq 0 ]; " +
+                                "fi; }"
+                    }
                     val command = "rm -rf $quotedInstallDir && mkdir -p $quotedInstallDir && chmod 777 $quotedInstallDir && " +
                             copyFilesCmd.joinToString(" && ") +
-                            " && $installCommand $installFiles; rc=\$?; rm -f $installFiles; rmdir $quotedInstallDir 2>/dev/null || true; exit \$rc"
+                            " && $installCommand; rc=\$?; rm -f $installFiles; rmdir $quotedInstallDir 2>/dev/null || true; exit \$rc"
                     Log.d(TAG, "install shell: $command")
 
                     val shellOutput = mutableListOf<String>()
