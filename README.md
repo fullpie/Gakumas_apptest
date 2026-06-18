@@ -35,18 +35,29 @@ Fork 或 clone 後可以直接跑 GitHub Actions 的 `Android CI`。若要產出
 
 ## 雲端 Patch Game
 
-`Game Patch Release` workflow 會：
+`Game Patch Release` workflow 支援兩種來源：
 
-1. 偵測 Google Play 上的遊戲版本；
-2. 使用 `apkeep` 下載官方 split APK；
-3. 使用 `APKEditor` 合併 split / asset pack；
-4. 使用本 repo 的 `app/libs/lspatch.jar` 產出 manager-mode patched APK；
-5. 建立 `game-v...` release 和 `gkms-game-patch.json`。
+### manual_xapk
+
+這是最容易跑通的方式。到 APKPure 或其他來源取得真正的 `.xapk` 下載直連後，在 Actions 手動執行：
+
+- `source`: `manual_xapk`
+- `xapk_url`: `.xapk` 直連，不是 APKPure 網頁 URL
+- `game_version`: 例如 `3.1.1`
+- `force`: 如果要覆蓋同版本 release，設為 `true`
+
+workflow 會下載 XAPK、檢查 manifest 的 package/version、用 `APKEditor` 合併 split / asset pack，再用本 repo 的 `app/libs/lspatch.jar` 產出 manager-mode patched APK，最後建立 `game-v...` release 和 `gkms-game-patch.json`。
+
+### google_play
+
+這條路線會偵測 Google Play 上的遊戲版本，使用 `apkeep` 下載官方 split APK，再合併與 patch。
 
 需要在 repo secrets 設定：
 
 - `PLAY_EMAIL`
 - `AAS_TOKEN`
+
+如果沒有設定這兩個 secrets，排程觸發的 Google Play patch 會自動跳過；手動選 `google_play` 時則會報錯提醒。
 
 如果 repo 是 private，app 端無法不帶 token 讀取 GitHub Releases；要讓一般使用者直接在 app 內檢查/下載更新，請把 release 所在 repo 設為 public，或把 metadata / APK 發佈到另一個 public repo。
 
