@@ -3,7 +3,6 @@ package io.github.chinosk.gakumas.localify
 import android.Manifest
 import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
@@ -27,7 +26,6 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.github.chinosk.gakumas.localify.mainUtils.IOnShell
-import io.github.chinosk.gakumas.localify.mainUtils.IntentSenderHelper
 import io.github.chinosk.gakumas.localify.mainUtils.LSPatchUtils
 import io.github.chinosk.gakumas.localify.mainUtils.ShizukuApi
 import io.github.chinosk.gakumas.localify.mainUtils.ShizukuShell
@@ -49,8 +47,6 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.CountDownLatch
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 
 
 interface PatchCallback {
@@ -608,6 +604,10 @@ class PatchActivity : ComponentActivity() {
             return Array(size, nonceItem).joinToString("")
         }
 
+        private fun shellQuote(value: String): String {
+            return "'${value.replace("'", "'\"'\"'")}'"
+        }
+
         fun saveFilesToDownload(context: PatchActivity, apkFiles: List<File>, targetFolder: String,
                                 isMove: Boolean): List<String>? {
             val ret: MutableList<String> = mutableListOf()
@@ -662,53 +662,55 @@ class PatchActivity : ComponentActivity() {
                         uninstallShell.destroy()
                     }
 
-                    if (reservePatchFiles) {
-                        val savedFileNames = saveFilesToDownload(context, apkFiles, "gkms_local_patch", false)
-                        if (savedFileNames == null) {
-                            status = PackageInstaller.STATUS_FAILURE
-                            message = "Save files failed."
-                            return@runCatching
-                        }
-                        patchCallback?.onLog("Patched files saved: $savedFileNames")
+                    val savedFileNames = saveFilesToDownload(context, apkFiles, "gkms_local_patch", !reservePatchFiles)
+                    if (savedFileNames == null) {
+                        status = PackageInstaller.STATUS_FAILURE
+                        message = "Save files failed."
+                        return@runCatching
                     }
+                    patchCallback?.onLog("Patched files saved: $savedFileNames")
 
                     patchCallback?.onLog("Installing patched files: ${apkFiles.joinToString { it.name }}")
 
-                    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                    params.setAppPackageName("com.bandainamcoent.idolmaster_gakuen")
-                    params.setSize(apkFiles.sumOf { it.length() })
+                    val sdcardPath = Environment.getExternalStorageDirectory().path
+                    val targetDirectory = File(sdcardPath, "Download/gkms_local_patch")
+                    val installDS = "/data/local/tmp/gkms_local_patch"
+                    val quotedInstallDir = shellQuote(installDS)
+                    val action = if (reservePatchFiles) "cp" else "mv"
+                    val copyFilesCmd: MutableList<String> = mutableListOf()
+                    val movedFiles: MutableList<String> = mutableListOf()
 
-                    ShizukuApi.createPackageInstallerSession(params).use { session ->
-                        apkFiles.forEach { apk ->
-                            if (!apk.exists()) throw NoSuchFileException(apk)
-                            patchCallback?.onLog("Add install file: ${apk.name}")
-                            apk.inputStream().use { input ->
-                                session.openWrite(apk.name, 0, apk.length()).use { output ->
-                                    input.copyTo(output)
-                                    session.fsync(output)
-                                }
-                            }
-                        }
-
-                        var result: Intent? = null
-                        suspendCoroutine<Unit> { cont ->
-                            val adapter = IntentSenderHelper.IIntentSenderAdaptor { intent ->
-                                result = intent
-                                cont.resume(Unit)
-                            }
-                            session.commit(IntentSenderHelper.newIntentSender(adapter))
-                        }
-
-                        result?.let {
-                            status = it.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
-                            message = it.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
-                        } ?: throw IllegalStateException("PackageInstaller returned no result.")
+                    savedFileNames.forEach { file ->
+                        val sourceFile = shellQuote(File(targetDirectory, file).absolutePath)
+                        val targetFile = shellQuote("$installDS/$file")
+                        movedFiles.add(targetFile)
+                        copyFilesCmd.add("$action $sourceFile $targetFile")
                     }
 
-                    if (status == PackageInstaller.STATUS_SUCCESS) {
-                        message = message ?: "Done."
+                    val installFiles = movedFiles.joinToString(" ")
+                    val installCommand = if (savedFileNames.size == 1) "pm install -r" else "pm install-multiple -r"
+                    val command = "rm -rf $quotedInstallDir && mkdir -p $quotedInstallDir && chmod 777 $quotedInstallDir && " +
+                            copyFilesCmd.joinToString(" && ") +
+                            " && $installCommand $installFiles; rc=\$?; rm -f $installFiles; rmdir $quotedInstallDir 2>/dev/null || true; exit \$rc"
+                    Log.d(TAG, "install shell: $command")
+
+                    val shellOutput = mutableListOf<String>()
+                    val sh = ShizukuShell(shellOutput, command, ioShell)
+                    sh.exec()
+                    val exitCode = sh.exitCode
+                    sh.destroy()
+
+                    if (exitCode == 0) {
+                        status = PackageInstaller.STATUS_SUCCESS
+                        message = "Done."
+                    }
+                    else {
+                        status = PackageInstaller.STATUS_FAILURE
+                        message = "pm install failed with exit code $exitCode\n${shellOutput.joinToString("\n")}"
                         if (!reservePatchFiles) {
-                            apkFiles.forEach { if (it.exists()) it.delete() }
+                            savedFileNames.forEach { f ->
+                                context.deleteFileInDownloadFolder("gkms_local_patch", f)
+                            }
                         }
                     }
                 }.onFailure { e ->

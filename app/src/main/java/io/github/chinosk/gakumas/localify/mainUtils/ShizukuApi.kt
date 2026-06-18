@@ -2,21 +2,15 @@ package io.github.chinosk.gakumas.localify.mainUtils
 
 
 import android.content.IntentSender
-import android.content.pm.IPackageInstaller
-import android.content.pm.IPackageInstallerSession
 import android.content.pm.IPackageManager
-import android.content.pm.PackageInstaller
-import android.content.pm.PackageInstallerHidden
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
-import android.os.IInterface
 import android.os.Process
 import android.os.SystemProperties
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import dev.rikka.tools.refine.Refine
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
@@ -26,24 +20,10 @@ import rikka.shizuku.SystemServiceHelper
 // From https://github.com/LSPosed/LSPatch/blob/master/manager/src/main/java/org/lsposed/lspatch/util/ShizukuApi.kt
 object ShizukuApi {
     private fun IBinder.wrap() = ShizukuBinderWrapper(this)
-    private fun IInterface.asShizukuBinder() = this.asBinder().wrap()
     private var initialized = false
 
     private val iPackageManager: IPackageManager by lazy {
         IPackageManager.Stub.asInterface(SystemServiceHelper.getSystemService("package").wrap())
-    }
-
-    private val iPackageInstaller: IPackageInstaller by lazy {
-        IPackageInstaller.Stub.asInterface(iPackageManager.packageInstaller.asShizukuBinder())
-    }
-
-    private val packageInstaller: PackageInstaller by lazy {
-        val userId = Process.myUserHandle().hashCode()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Refine.unsafeCast(PackageInstallerHidden(iPackageInstaller, "com.android.shell", null, userId))
-        } else {
-            Refine.unsafeCast(PackageInstallerHidden(iPackageInstaller, "com.android.shell", userId))
-        }
     }
 
     var isBinderAvailable = false
@@ -62,12 +42,6 @@ object ShizukuApi {
             isBinderAvailable = false
             isPermissionGranted = false
         }
-    }
-
-    fun createPackageInstallerSession(params: PackageInstaller.SessionParams): PackageInstaller.Session {
-        val sessionId = packageInstaller.createSession(params)
-        val iSession = IPackageInstallerSession.Stub.asInterface(iPackageInstaller.openSession(sessionId).asShizukuBinder())
-        return Refine.unsafeCast(PackageInstallerHidden.SessionHidden(iSession))
     }
 
     fun isPackageInstalledWithoutPatch(packageName: String): Boolean {

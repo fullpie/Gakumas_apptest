@@ -22,6 +22,8 @@ class ShizukuShell(private var mOutput: MutableList<String>, private var mComman
     private val shellCallback: IOnShell? = null) {
     val isBusy: Boolean
         get() = mOutput.size > 0 && mOutput[mOutput.size - 1] != "aShell: Finish"
+    var exitCode: Int? = null
+        private set
 
     fun exec(): ShizukuShell {
         try {
@@ -63,8 +65,11 @@ class ShizukuShell(private var mOutput: MutableList<String>, private var mComman
                 mDir = dir
             }
 
-            mProcess!!.waitFor()
-        } catch (ignored: Exception) {
+            exitCode = mProcess!!.waitFor()
+        } catch (e: Exception) {
+            exitCode = -1
+            Log.e(shellTag, "Execute failed", e)
+            shellCallback?.onShellError(e.stackTraceToString())
         }
         return this
     }
