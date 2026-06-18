@@ -27,6 +27,7 @@ import rikka.shizuku.SystemServiceHelper
 object ShizukuApi {
     private fun IBinder.wrap() = ShizukuBinderWrapper(this)
     private fun IInterface.asShizukuBinder() = this.asBinder().wrap()
+    private var initialized = false
 
     private val iPackageManager: IPackageManager by lazy {
         IPackageManager.Stub.asInterface(SystemServiceHelper.getSystemService("package").wrap())
@@ -49,6 +50,8 @@ object ShizukuApi {
     var isPermissionGranted by mutableStateOf(false)
 
     fun init() {
+        if (initialized) return
+        initialized = true
         HiddenApiBypass.addHiddenApiExemptions("")
         HiddenApiBypass.addHiddenApiExemptions("Landroid/content", "Landroid/os")
         Shizuku.addBinderReceivedListenerSticky {

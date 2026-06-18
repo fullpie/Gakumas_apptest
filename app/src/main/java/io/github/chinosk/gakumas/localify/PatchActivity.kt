@@ -3,8 +3,11 @@ package io.github.chinosk.gakumas.localify
 import android.Manifest
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageInstallerHidden.SessionParamsHidden
 import android.content.pm.PackageManager
+import android.content.pm.PackageManagerHidden
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -25,7 +28,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import dev.rikka.tools.refine.Refine
 import io.github.chinosk.gakumas.localify.mainUtils.IOnShell
+import io.github.chinosk.gakumas.localify.mainUtils.IntentSenderHelper
 import io.github.chinosk.gakumas.localify.mainUtils.LSPatchUtils
 import io.github.chinosk.gakumas.localify.mainUtils.ShizukuApi
 import io.github.chinosk.gakumas.localify.mainUtils.ShizukuShell
@@ -36,6 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import org.lsposed.patch.LSPatch
 import org.lsposed.patch.util.Logger
 import java.io.File
@@ -46,6 +52,8 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.CountDownLatch
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 
 interface PatchCallback {
@@ -252,7 +260,7 @@ class PatchActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         outputDir = "${filesDir.absolutePath}/output"
-        // ShizukuApi.init()
+        ShizukuApi.init()
         checkAndRequestWritePermission()
 
         setContent {
@@ -374,10 +382,10 @@ class PatchActivity : ComponentActivity() {
                 }*/
             }
 
-            val files = unzipCacheDir.listFiles()
-            if (files == null) {
+            val apks = collectApkFiles(unzipCacheDir)
+            if (apks.isEmpty()) {
                 withContext(Dispatchers.Main) {
-                    callback.onFailed("Can't get unzip files: $fileName")
+                    callback.onFailed("No apk files found in: $fileName")
                 }
                 return@launch
             }
@@ -386,18 +394,41 @@ class PatchActivity : ComponentActivity() {
                 callback.onLog("Unzip completed.")
             }
 
-            val apks: MutableList<File> = mutableListOf()
-            for (file in files) {
-                if (file.isFile) {
-                    if (file.name.lowercase().endsWith(".apk")) {
-                        apks.add(file)
-                    }
-                }
-            }
             patchApks(apks, isLocalMode, isDebuggable, callback) {
                 LSPatchUtils.deleteDirectory(unzipCacheDir)
             }
         }
+    }
+
+    private fun collectApkFiles(root: File): List<File> {
+        val apks = root.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".apk", ignoreCase = true) }
+            .toList()
+        val manifestFile = File(root, "manifest.json")
+        if (!manifestFile.exists()) return apks
+
+        return runCatching {
+            val splitApks = JSONObject(manifestFile.readText()).optJSONArray("split_apks")
+                ?: return@runCatching apks
+            val apkByName = apks.associateBy { it.name }
+            val orderedApks = mutableListOf<File>()
+            for (i in 0 until splitApks.length()) {
+                val fileName = splitApks.optJSONObject(i)?.optString("file").orEmpty()
+                apkByName[fileName]?.let { orderedApks.add(it) }
+            }
+            orderedApks + apks.filter { it !in orderedApks }
+        }.getOrDefault(apks)
+    }
+
+    private fun isLikelyBaseApk(apk: File): Boolean {
+        val lowerName = apk.name.lowercase()
+        if (lowerName == "base.apk" || lowerName == "master.apk") return true
+        if (lowerName.startsWith("split_") || lowerName.startsWith("config.")) return false
+        if (lowerName.contains(".config.") || lowerName.contains("_config.")) return false
+
+        return runCatching {
+            packageManager.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_META_DATA) != null
+        }.getOrDefault(false)
     }
 
     private fun patchApks(apks: List<File>, isLocalMode: Boolean, isDebuggable: Boolean,
@@ -405,6 +436,20 @@ class PatchActivity : ComponentActivity() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                if (apks.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        callback.onFailed("No apk files selected.")
+                    }
+                    return@launch
+                }
+
+                val orderedApks = apks.withIndex()
+                    .sortedWith(
+                        compareByDescending<IndexedValue<File>> { isLikelyBaseApk(it.value) }
+                            .thenBy { it.index }
+                    )
+                    .map { it.value }
+
                 val lspatch = LSPatchExt(outputDir, isDebuggable, isLocalMode, object : PatchLogger() {
                     override fun d(msg: String) {
                         super.d(msg)
@@ -433,6 +478,7 @@ class PatchActivity : ComponentActivity() {
                 }
 
                 withContext(Dispatchers.Main) {
+                    callback.onLog("APK files: ${orderedApks.joinToString { it.name }}")
                     callback.onLog("Patching started.")
                 }
 
@@ -443,7 +489,7 @@ class PatchActivity : ComponentActivity() {
                 }
 
                 val outFiles: MutableList<File> = mutableListOf()
-                for (i in apks) {
+                for (i in orderedApks) {
                     val outFile = File(outBasePath, "patch-${i.name}")
                     if (outFile.exists()) {
                         outFile.delete()
@@ -597,29 +643,9 @@ class PatchActivity : ComponentActivity() {
 
             withContext(Dispatchers.IO) {
                 runCatching {
-                    val sdcardPath = Environment.getExternalStorageDirectory().path
-                    val targetDirectory = File(sdcardPath, "Download/gkms_local_patch")
-                    // val savedFiles = saveFileTo(apkFiles, targetDirectory, true, false)
-
-                    val savedFileNames = saveFilesToDownload(context, apkFiles, "gkms_local_patch", true)
-                    if (savedFileNames == null) {
-                        status = PackageInstaller.STATUS_FAILURE
-                        message = "Save files failed."
-                        return@runCatching
-                    }
-
-                    // patchCallback?.onLog("Patched files: $savedFiles")
-                    patchCallback?.onLog("Patched files: $apkFiles")
-
                     if (!ShizukuApi.isPermissionGranted) {
                         status = PackageInstaller.STATUS_FAILURE
                         message = "Shizuku Not Ready."
-                        // if (!reservePatchFiles) savedFiles.forEach { file -> if (file.exists()) file.delete() }
-                        if (!reservePatchFiles) {
-                            savedFileNames.forEach { f ->
-                                context.deleteFileInDownloadFolder("gkms_local_patch", f)
-                            }
-                        }
                         return@runCatching
                     }
 
@@ -639,44 +665,57 @@ class PatchActivity : ComponentActivity() {
                         uninstallShell.destroy()
                     }
 
-                    val installDS = "/data/local/tmp/gkms_local_patch"
-
-                    val action = if (reservePatchFiles) "cp" else "mv"
-                    val copyFilesCmd: MutableList<String> = mutableListOf()
-                    val movedFiles: MutableList<String> = mutableListOf()
-                    savedFileNames.forEach { file ->
-                        val movedFileName = "\"$installDS/${file}\""
-                        movedFiles.add(movedFileName)
-                        val dlSaveFileName = File(targetDirectory, file)
-                        copyFilesCmd.add("$action ${dlSaveFileName.absolutePath} $movedFileName")
+                    if (reservePatchFiles) {
+                        val savedFileNames = saveFilesToDownload(context, apkFiles, "gkms_local_patch", false)
+                        if (savedFileNames == null) {
+                            status = PackageInstaller.STATUS_FAILURE
+                            message = "Save files failed."
+                            return@runCatching
+                        }
+                        patchCallback?.onLog("Patched files saved: $savedFileNames")
                     }
-                    /*
-                    savedFiles.forEach { file ->
-                        val movedFileName = "$installDS/${file.name}"
-                        movedFiles.add(movedFileName)
-                        copyFilesCmd.add("$action ${file.absolutePath} $movedFileName")
+
+                    patchCallback?.onLog("Installing patched files: ${apkFiles.joinToString { it.name }}")
+
+                    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+                    val hiddenParams = Refine.unsafeCast<SessionParamsHidden>(params)
+                    hiddenParams.installFlags = hiddenParams.installFlags or
+                            PackageManagerHidden.INSTALL_ALLOW_TEST or
+                            PackageManagerHidden.INSTALL_REPLACE_EXISTING
+
+                    ShizukuApi.createPackageInstallerSession(params).use { session ->
+                        apkFiles.forEach { apk ->
+                            if (!apk.exists()) throw NoSuchFileException(apk)
+                            patchCallback?.onLog("Add install file: ${apk.name}")
+                            apk.inputStream().use { input ->
+                                session.openWrite(apk.name, 0, apk.length()).use { output ->
+                                    input.copyTo(output)
+                                    session.fsync(output)
+                                }
+                            }
+                        }
+
+                        var result: Intent? = null
+                        suspendCoroutine<Unit> { cont ->
+                            val adapter = IntentSenderHelper.IIntentSenderAdaptor { intent ->
+                                result = intent
+                                cont.resume(Unit)
+                            }
+                            session.commit(IntentSenderHelper.newIntentSender(adapter))
+                        }
+
+                        result?.let {
+                            status = it.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+                            message = it.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+                        } ?: throw IllegalStateException("PackageInstaller returned no result.")
                     }
-                    */
-                    val createDirCommand = "mkdir $installDS"
-                    val moveFileCommand = "chmod 777 $installDS && " +
-                            copyFilesCmd.joinToString(" && ")
-                    Log.d(TAG, "moveFileCommand: $moveFileCommand")
 
-                    ShizukuShell(mutableListOf(), createDirCommand, ioShell).exec().destroy()
-
-                    val cpFileShell = ShizukuShell(mutableListOf(), moveFileCommand, ioShell)
-                    cpFileShell.exec()
-                    cpFileShell.destroy()
-
-                    val installFiles = movedFiles.joinToString(" ")
-                    val command = "pm install -r $installFiles && rm $installFiles"
-                    Log.d(TAG, "shell: $command")
-                    val sh = ShizukuShell(mutableListOf(), command, ioShell)
-                    sh.exec()
-                    sh.destroy()
-
-                    status = PackageInstaller.STATUS_SUCCESS
-                    message = "Done."
+                    if (status == PackageInstaller.STATUS_SUCCESS) {
+                        message = message ?: "Done."
+                        if (!reservePatchFiles) {
+                            apkFiles.forEach { if (it.exists()) it.delete() }
+                        }
+                    }
                 }.onFailure { e ->
                     status = PackageInstaller.STATUS_FAILURE
                     message = e.stackTraceToString()
