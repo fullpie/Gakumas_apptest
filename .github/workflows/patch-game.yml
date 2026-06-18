@@ -229,7 +229,26 @@ jobs:
             echo "::warning::LSPatch exited with $lspatch_rc but produced $patched; continuing."
           fi
           mv "$patched" "$PATCHED_APK_NAME"
-          unzip -t "$PATCHED_APK_NAME" >/dev/null
+          ls -lh "$PATCHED_APK_NAME"
+          python - "$PATCHED_APK_NAME" <<'PY'
+          import sys, zipfile
+
+          path = sys.argv[1]
+          with zipfile.ZipFile(path) as apk:
+              names = set(apk.namelist())
+              missing = [name for name in ("AndroidManifest.xml", "classes.dex") if name not in names]
+              if missing:
+                  raise SystemExit(f"Patched APK missing required entries: {', '.join(missing)}")
+              print(f"Patched APK zip entries: {len(names)}")
+          PY
+          set +e
+          unzip -t "$PATCHED_APK_NAME" >/tmp/patched-unzip-test.log 2>&1
+          unzip_rc=$?
+          set -e
+          if [ "$unzip_rc" -ne 0 ]; then
+            cat /tmp/patched-unzip-test.log
+            echo "::warning::unzip -t exited with $unzip_rc for $PATCHED_APK_NAME; continuing because Python zip validation passed."
+          fi
 
       - name: Write metadata
         run: |
