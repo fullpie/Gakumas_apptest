@@ -46,7 +46,12 @@ import io.github.chinosk.gakumas.localify.getProgramDownloadState
 import io.github.chinosk.gakumas.localify.getProgramLocalResourceVersionState
 import io.github.chinosk.gakumas.localify.getProgramLocalAPIResourceVersionState
 import io.github.chinosk.gakumas.localify.hookUtils.FileHotUpdater
+import io.github.chinosk.gakumas.localify.mainUtils.ApkInstallUtils
 import io.github.chinosk.gakumas.localify.mainUtils.FileDownloader
+import io.github.chinosk.gakumas.localify.mainUtils.GamePatchUpdate
+import io.github.chinosk.gakumas.localify.mainUtils.AppUpdate
+import io.github.chinosk.gakumas.localify.mainUtils.OnlineUpdateChecker
+import io.github.chinosk.gakumas.localify.mainUtils.OnlineUpdateResult
 import io.github.chinosk.gakumas.localify.mainUtils.RemoteAPIFilesChecker
 import io.github.chinosk.gakumas.localify.mainUtils.TimeUtils
 import io.github.chinosk.gakumas.localify.models.GakumasConfig
@@ -87,6 +92,147 @@ fun HomePage(modifier: Modifier = Modifier,
 
     val resourceSettingsViewModel: ResourceCollapsibleBoxViewModel =
         viewModel(factory = ResourceCollapsibleBoxViewModelFactory(initiallyExpanded = false))
+
+    var onlineChecking by rememberSaveable { mutableStateOf(false) }
+    var onlineStatus by rememberSaveable { mutableStateOf("Not checked") }
+    var onlineDownloadProgress by rememberSaveable { mutableStateOf(-1f) }
+    var onlineErrorString by rememberSaveable { mutableStateOf("") }
+    var onlineResult by remember { mutableStateOf<OnlineUpdateResult?>(null) }
+
+    fun formatFileSize(size: Long): String {
+        if (size <= 0) return "unknown size"
+        val mib = size.toDouble() / 1024.0 / 1024.0
+        return "%.1f MiB".format(mib)
+    }
+
+    fun openInstaller(file: File) {
+        try {
+            ApkInstallUtils.openSystemInstaller(context!!, file)
+        }
+        catch (e: Exception) {
+            onlineErrorString = e.message ?: e.toString()
+        }
+    }
+
+    fun downloadAndInstall(url: String, fileName: String, label: String) {
+        if (context == null) return
+        onlineChecking = true
+        onlineErrorString = ""
+        onlineDownloadProgress = 0f
+        onlineStatus = "Downloading $label..."
+        val outputFile = File(File(context.filesDir, "downloads"), fileName)
+        FileDownloader.downloadFileTo(
+            url,
+            outputFile,
+            checkContentTypes = listOf(
+                "application/vnd.android.package-archive",
+                "application/octet-stream",
+                "binary/octet-stream"
+            ),
+            onDownload = { progress, downloaded, size ->
+                context.runOnUiThread {
+                    onlineDownloadProgress = progress
+                    onlineStatus = if (size > 0) {
+                        "Downloading $label: ${formatFileSize(downloaded)} / ${formatFileSize(size)}"
+                    }
+                    else {
+                        "Downloading $label: ${formatFileSize(downloaded)}"
+                    }
+                }
+            },
+            onSuccess = { file ->
+                context.runOnUiThread {
+                    onlineChecking = false
+                    onlineDownloadProgress = -1f
+                    onlineStatus = "$label downloaded. Opening installer..."
+                    openInstaller(file)
+                }
+            },
+            onFailed = { _, reason ->
+                context.runOnUiThread {
+                    onlineChecking = false
+                    onlineDownloadProgress = -1f
+                    onlineStatus = "$label download failed"
+                    onlineErrorString = reason
+                }
+            }
+        )
+    }
+
+    fun installAppUpdate(update: AppUpdate) {
+        downloadAndInstall(update.asset.browser_download_url, update.asset.name, "app update")
+    }
+
+    fun installGamePatch(update: GamePatchUpdate) {
+        downloadAndInstall(update.asset.browserDownloadUrl, update.asset.name, "game patch")
+    }
+
+    fun describeOnlineResult(result: OnlineUpdateResult): String {
+        val lines = mutableListOf<String>()
+        val app = result.appUpdate
+        val game = result.gamePatchUpdate
+        if (app != null) {
+            lines.add("App: ${app.currentVersionName} -> ${app.latestVersionName}")
+        }
+        else {
+            lines.add("App: current")
+        }
+        if (game != null) {
+            val installed = game.installedVersionName ?: "not installed"
+            val patchState = if (game.installedIsPatched) "patched" else "not patched"
+            lines.add("Game: $installed ($patchState) -> ${game.metadata.gameVersion}")
+        }
+        else {
+            lines.add("Game patch: current")
+        }
+        return lines.joinToString("\n")
+    }
+
+    fun showOnlineUpdateConfirm(result: OnlineUpdateResult) {
+        if (context == null) return
+        val game = result.gamePatchUpdate
+        val app = result.appUpdate
+        when {
+            game != null -> {
+                context.mainUIConfirmStatUpdate(
+                    true,
+                    "Game patch update",
+                    "${describeOnlineResult(result)}\n\nDownload and install the patched game APK?",
+                    onConfirm = { installGamePatch(game) }
+                )
+            }
+            app != null -> {
+                context.mainUIConfirmStatUpdate(
+                    true,
+                    "App update",
+                    "${describeOnlineResult(result)}\n\nDownload and install the new app APK?",
+                    onConfirm = { installAppUpdate(app) }
+                )
+            }
+        }
+    }
+
+    fun checkOnlineUpdates(isAutoCheck: Boolean = false) {
+        if (context == null || onlineChecking) return
+        onlineChecking = true
+        onlineErrorString = ""
+        onlineStatus = "Checking online updates..."
+        OnlineUpdateChecker.checkUpdates(context,
+            onResult = { result ->
+                onlineChecking = false
+                onlineResult = result
+                onlineStatus = describeOnlineResult(result)
+                if (isAutoCheck && (result.gamePatchUpdate != null || result.appUpdate != null)) {
+                    showOnlineUpdateConfirm(result)
+                }
+            },
+            onFailed = { reason ->
+                onlineChecking = false
+                onlineStatus = "Update check failed"
+                onlineErrorString = reason
+            }
+        )
+    }
 
 
     fun zipResourceDownload() {
@@ -210,6 +356,7 @@ fun HomePage(modifier: Modifier = Modifier,
                 if (programConfig.value.useAPIAssets && programConfig.value.useAPIAssetsURL.isNotEmpty()) {
                     onClickDownload(false, false)
                 }
+                checkOnlineUpdates(true)
             }
         }
         finally {
@@ -242,6 +389,60 @@ fun HomePage(modifier: Modifier = Modifier,
 
                 }
             }
+            Spacer(Modifier.height(6.dp))
+        }
+
+        item {
+            GakuGroupBox(modifier = modifier, title = "Online Updates") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text = onlineStatus, fontSize = 13.sp)
+
+                    if (onlineDownloadProgress >= 0) {
+                        GakuProgressBar(progress = onlineDownloadProgress, isError = onlineErrorString.isNotEmpty())
+                    }
+
+                    if (onlineErrorString.isNotEmpty()) {
+                        Text(text = onlineErrorString, color = Color(0xFFE2041B), fontSize = 13.sp)
+                    }
+
+                    Row(modifier = modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        val buttonModifier = remember {
+                            modifier
+                                .height(38.dp)
+                                .weight(1f)
+                        }
+                        if (onlineChecking) {
+                            GakuButton(modifier = buttonModifier,
+                                text = stringResource(id = R.string.cancel), onClick = {
+                                    FileDownloader.cancel()
+                                    onlineChecking = false
+                                    onlineDownloadProgress = -1f
+                                    onlineStatus = "Canceled"
+                                })
+                        }
+                        else {
+                            GakuButton(modifier = buttonModifier,
+                                text = stringResource(R.string.check_update),
+                                onClick = { checkOnlineUpdates(false) })
+                        }
+
+                        val appUpdate = onlineResult?.appUpdate
+                        GakuButton(modifier = buttonModifier,
+                            text = "App APK",
+                            enabled = appUpdate != null && !onlineChecking,
+                            onClick = { appUpdate?.let { installAppUpdate(it) } })
+
+                        val gameUpdate = onlineResult?.gamePatchUpdate
+                        GakuButton(modifier = buttonModifier,
+                            text = "Game APK",
+                            enabled = gameUpdate != null && !onlineChecking,
+                            onClick = { gameUpdate?.let { installGamePatch(it) } })
+                    }
+                }
+            }
+
             Spacer(Modifier.height(6.dp))
         }
 

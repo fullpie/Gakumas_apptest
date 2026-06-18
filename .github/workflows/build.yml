@@ -2,6 +2,9 @@ name: Android CI
 
 on: [push, pull_request, workflow_dispatch]
 
+permissions:
+  contents: write
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   KEYSTOREB64: ${{ secrets.KEYSTOREB64 }}
@@ -114,3 +117,69 @@ jobs:
       with:
         name: GakumasLocalify-Signed-apk
         path: ${{steps.sign_app.outputs.signedReleaseFile}}
+
+    - name: Prepare app release assets
+      if: ${{ startsWith(github.ref, 'refs/tags/app-v') }}
+      env:
+        SIGNED_APK: ${{ steps.sign_app.outputs.signedReleaseFile }}
+      run: |
+        set -euo pipefail
+        release_apk="GakumasLocalify-${GITHUB_REF_NAME}.apk"
+        source_apk="${SIGNED_APK:-}"
+        signed=true
+        if [ -z "$source_apk" ]; then
+          source_apk="app/build/outputs/apk/debug/app-debug.apk"
+          signed=false
+        fi
+        test -f "$source_apk"
+        cp "$source_apk" "$release_apk"
+        export signed
+        python - <<'PY'
+        import hashlib
+        import json
+        import os
+        from datetime import datetime, timezone
+
+        tag = os.environ["GITHUB_REF_NAME"]
+        repo = os.environ["GITHUB_REPOSITORY"]
+        apk = f"GakumasLocalify-{tag}.apk"
+        with open(apk, "rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        data = {
+            "schemaVersion": 1,
+            "kind": "gakumas-localify-app",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "releaseTag": tag,
+            "versionName": tag.removeprefix("app-"),
+            "packageName": "io.github.chinosk.gakumas.localify",
+            "signed": os.environ.get("signed", "false") == "true",
+            "assets": [
+                {
+                    "name": apk,
+                    "browserDownloadUrl": f"https://github.com/{repo}/releases/download/{tag}/{apk}",
+                    "sha256": digest,
+                    "size": os.path.getsize(apk),
+                    "contentType": "application/vnd.android.package-archive",
+                }
+            ],
+        }
+        with open("gkms-app-update.json", "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        PY
+
+    - name: Create app release
+      if: ${{ startsWith(github.ref, 'refs/tags/app-v') }}
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: Gakumas Localify ${{ github.ref_name }}
+        body: |
+          Gakumas Localify Android APK.
+
+          This release channel is used by the in-app updater. Game patch releases use the separate `game-v...` tag prefix.
+          If signing secrets are not configured, this release falls back to the debug APK and may require uninstalling the previous app before install.
+        make_latest: false
+        files: |
+          GakumasLocalify-${{ github.ref_name }}.apk
+          gkms-app-update.json
