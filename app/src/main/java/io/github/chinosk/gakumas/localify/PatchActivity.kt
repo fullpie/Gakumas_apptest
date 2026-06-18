@@ -5,9 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
-import android.content.pm.PackageInstallerHidden.SessionParamsHidden
 import android.content.pm.PackageManager
-import android.content.pm.PackageManagerHidden
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -28,7 +26,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import dev.rikka.tools.refine.Refine
 import io.github.chinosk.gakumas.localify.mainUtils.IOnShell
 import io.github.chinosk.gakumas.localify.mainUtils.IntentSenderHelper
 import io.github.chinosk.gakumas.localify.mainUtils.LSPatchUtils
@@ -678,10 +675,8 @@ class PatchActivity : ComponentActivity() {
                     patchCallback?.onLog("Installing patched files: ${apkFiles.joinToString { it.name }}")
 
                     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                    val hiddenParams = Refine.unsafeCast<SessionParamsHidden>(params)
-                    hiddenParams.installFlags = hiddenParams.installFlags or
-                            PackageManagerHidden.INSTALL_ALLOW_TEST or
-                            PackageManagerHidden.INSTALL_REPLACE_EXISTING
+                    params.setAppPackageName("com.bandainamcoent.idolmaster_gakuen")
+                    params.setSize(apkFiles.sumOf { it.length() })
 
                     ShizukuApi.createPackageInstallerSession(params).use { session ->
                         apkFiles.forEach { apk ->
