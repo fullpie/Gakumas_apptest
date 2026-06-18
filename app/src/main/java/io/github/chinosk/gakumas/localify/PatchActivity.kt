@@ -25,6 +25,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.android.apksig.ApkSigner
 import io.github.chinosk.gakumas.localify.mainUtils.IOnShell
 import io.github.chinosk.gakumas.localify.mainUtils.LSPatchUtils
 import io.github.chinosk.gakumas.localify.mainUtils.ShizukuApi
@@ -46,6 +47,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
+import java.security.KeyStore
+import java.security.cert.X509Certificate
 import java.util.concurrent.CountDownLatch
 
 
@@ -424,6 +427,35 @@ class PatchActivity : ComponentActivity() {
         }.getOrDefault(false)
     }
 
+    private fun signApkWithDefaultLSPatchKey(srcApkFile: File, outputFile: File) {
+        val password = "123456".toCharArray()
+        val keyStore = KeyStore.getInstance(KeyStore.getDefaultType())
+        val loader = LSPatch::class.java.classLoader
+            ?: throw IllegalStateException("LSPatch class loader is null")
+
+        loader.getResourceAsStream("assets/keystore").use { input ->
+            if (input == null) throw IllegalStateException("Default LSPatch keystore not found")
+            keyStore.load(input, password)
+        }
+
+        val entry = keyStore.getEntry(
+            "key0",
+            KeyStore.PasswordProtection(password)
+        ) as KeyStore.PrivateKeyEntry
+        val signerConfig = ApkSigner.SignerConfig.Builder(
+            "key0",
+            entry.privateKey,
+            entry.certificateChain.map { it as X509Certificate }
+        ).build()
+
+        ApkSigner.Builder(listOf(signerConfig))
+            .setInputApk(srcApkFile)
+            .setOutputApk(outputFile)
+            .setMinSdkVersion(28)
+            .build()
+            .sign()
+    }
+
     private fun patchApks(apks: List<File>, isLocalMode: Boolean, isDebuggable: Boolean,
                           callback: PatchCallback, onPatchEnd: (() -> Unit)? = null) {
 
@@ -482,13 +514,21 @@ class PatchActivity : ComponentActivity() {
                 }
 
                 val outFiles: MutableList<File> = mutableListOf()
-                for (i in orderedApks) {
+                for ((index, i) in orderedApks.withIndex()) {
                     val outFile = File(outBasePath, "patch-${i.name}")
                     if (outFile.exists()) {
                         outFile.delete()
                     }
-                    callback.onLog("Patching $i")
-                    lspatch.patch(i, outFile)
+
+                    if (orderedApks.size > 1 && index > 0) {
+                        callback.onLog("Signing split $i")
+                        signApkWithDefaultLSPatchKey(i, outFile)
+                    }
+                    else {
+                        callback.onLog("Patching $i")
+                        lspatch.patch(i, outFile)
+                    }
+
                     i.delete()
                     outFiles.add(outFile)
                 }
