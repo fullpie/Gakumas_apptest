@@ -115,32 +115,30 @@ fun HomePage(modifier: Modifier = Modifier,
         }
     }
 
-    fun downloadAndInstall(url: String, fileName: String, label: String) {
+    fun downloadAndInstall(url: String, fileName: String, label: String, expectedSha256: String? = null) {
         if (context == null) return
         onlineChecking = true
         onlineErrorString = ""
         onlineDownloadProgress = 0f
-        onlineStatus = "Starting background download for $label..."
+        onlineStatus = "Starting resumable download for $label..."
         val downloadRoot = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
             ?: File(context.filesDir, "downloads")
         val outputFile = File(
             File(downloadRoot, "online-updates"),
             fileName
         )
-        FileDownloader.downloadFileWithSystemManager(
-            context = context,
+        FileDownloader.downloadFileResumable(
             url = url,
             outputFile = outputFile,
-            title = fileName,
-            description = "Downloading $label",
+            expectedSha256 = expectedSha256,
             onDownload = { progress, downloaded, size ->
                 context.runOnUiThread {
                     onlineDownloadProgress = progress
                     onlineStatus = if (size > 0) {
-                        "Background downloading $label: ${formatFileSize(downloaded)} / ${formatFileSize(size)}"
+                        "Downloading $label: ${formatFileSize(downloaded)} / ${formatFileSize(size)}"
                     }
                     else {
-                        "Background downloading $label: ${formatFileSize(downloaded)}"
+                        "Downloading $label: ${formatFileSize(downloaded)}"
                     }
                 }
             },
@@ -168,7 +166,7 @@ fun HomePage(modifier: Modifier = Modifier,
     }
 
     fun installGamePatch(update: GamePatchUpdate) {
-        downloadAndInstall(update.asset.browserDownloadUrl, update.asset.name, "game patch")
+        downloadAndInstall(update.asset.browserDownloadUrl, update.asset.name, "game patch", update.asset.sha256)
     }
 
     fun describeOnlineResult(result: OnlineUpdateResult): String {

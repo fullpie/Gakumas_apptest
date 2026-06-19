@@ -1,13 +1,11 @@
 package io.github.chinosk.gakumas.localify.mainUtils
 
-import android.app.DownloadManager
-import android.content.Context
-import android.net.Uri
 import okhttp3.*
 import java.io.IOException
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
@@ -21,9 +19,7 @@ object FileDownloader {
     @Volatile
     private var call: Call? = null
     @Volatile
-    private var downloadManager: DownloadManager? = null
-    @Volatile
-    private var downloadManagerId: Long? = null
+    private var cancelRequested: Boolean = false
 
     fun requestGet(request: Request, callback: Callback) {
         val client = OkHttpClient.Builder()
@@ -219,94 +215,167 @@ object FileDownloader {
         }
     }
 
-    fun downloadFileWithSystemManager(
-        context: Context,
+    fun downloadFileResumable(
         url: String,
         outputFile: File,
-        title: String,
-        description: String,
+        expectedSha256: String? = null,
         onDownload: (Float, downloaded: Long, size: Long) -> Unit,
         onSuccess: (File) -> Unit,
         onFailed: (Int, String) -> Unit
     ) {
         try {
-            if (call != null || downloadManagerId != null) {
+            if (call != null) {
                 onFailed(-1, "Another file is downloading.")
                 return
             }
 
             outputFile.parentFile?.mkdirs()
-            if (outputFile.exists()) outputFile.delete()
+            cancelRequested = false
 
-            val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val request = DownloadManager.Request(Uri.parse(url))
-                .setTitle(title)
-                .setDescription(description)
-                .setMimeType("application/vnd.android.package-archive")
-                .setAllowedOverMetered(true)
-                .setAllowedOverRoaming(true)
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationUri(Uri.fromFile(outputFile))
-
-            val id = manager.enqueue(request)
-            downloadManager = manager
-            downloadManagerId = id
-
-            thread(name = "system-download-progress") {
-                val query = DownloadManager.Query().setFilterById(id)
-                while (downloadManagerId == id) {
-                    manager.query(query)?.use { cursor ->
-                        if (!cursor.moveToFirst()) {
-                            downloadManagerId = null
-                            downloadManager = null
-                            onFailed(-1, "Download no longer exists.")
+            thread(name = "resumable-apk-download") {
+                val partialFile = File(outputFile.parentFile, "${outputFile.name}.download")
+                val partialMetaFile = File(outputFile.parentFile, "${outputFile.name}.download.meta")
+                try {
+                    if (outputFile.exists()) {
+                        if (expectedSha256 == null || fileSha256(outputFile).equals(expectedSha256, ignoreCase = true)) {
+                            onDownload(1f, outputFile.length(), outputFile.length())
+                            onSuccess(outputFile)
                             return@thread
                         }
+                        outputFile.delete()
+                    }
+                    if (expectedSha256 != null) {
+                        val previousExpected = partialMetaFile.takeIf { it.exists() }?.readText()?.trim()
+                        if (partialFile.exists() && previousExpected != null &&
+                            !previousExpected.equals(expectedSha256, ignoreCase = true)
+                        ) {
+                            partialFile.delete()
+                        }
+                        partialMetaFile.writeText(expectedSha256)
+                    }
 
-                        val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                        val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-                        val size = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-                        val progress = if (size > 0) downloaded.toFloat() / size else 0f
-                        onDownload(progress, downloaded, size)
+                    var attempts = 0
+                    while (!cancelRequested) {
+                        try {
+                            downloadAttempt(url, partialFile, onDownload)
+                            if (cancelRequested) break
 
-                        when (status) {
-                            DownloadManager.STATUS_SUCCESSFUL -> {
-                                downloadManagerId = null
-                                downloadManager = null
-                                onDownload(1f, outputFile.length(), outputFile.length())
-                                onSuccess(outputFile)
+                            if (expectedSha256 != null &&
+                                !fileSha256(partialFile).equals(expectedSha256, ignoreCase = true)
+                            ) {
+                                partialFile.delete()
+                                onFailed(-1, "Downloaded file checksum mismatch.")
                                 return@thread
                             }
-                            DownloadManager.STATUS_FAILED -> {
-                                val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
-                                downloadManagerId = null
-                                downloadManager = null
-                                outputFile.delete()
-                                onFailed(reason, "System download failed: $reason")
+
+                            if (outputFile.exists()) outputFile.delete()
+                            if (!partialFile.renameTo(outputFile)) {
+                                partialFile.copyTo(outputFile, overwrite = true)
+                                partialFile.delete()
+                            }
+                            partialMetaFile.delete()
+                            onDownload(1f, outputFile.length(), outputFile.length())
+                            onSuccess(outputFile)
+                            return@thread
+                        } catch (e: IOException) {
+                            if (cancelRequested) break
+                            attempts += 1
+                            if (attempts >= 5) {
+                                onFailed(-1, "Download paused: ${e.message ?: "network error"}. Press download again to resume.")
                                 return@thread
                             }
+                            Thread.sleep((attempts * 1500L).coerceAtMost(6000L))
                         }
                     }
-                    Thread.sleep(700)
+                    onFailed(-1, "Download canceled")
+                } catch (e: Exception) {
+                    onFailed(-1, e.message ?: e.toString())
+                } finally {
+                    call = null
                 }
             }
         }
         catch (e: Exception) {
-            downloadManagerId = null
-            downloadManager = null
-            outputFile.delete()
             onFailed(-1, e.message ?: e.toString())
         }
     }
 
+    private fun downloadAttempt(
+        url: String,
+        partialFile: File,
+        onDownload: (Float, downloaded: Long, size: Long) -> Unit
+    ) {
+        partialFile.parentFile?.mkdirs()
+        var existingBytes = if (partialFile.exists()) partialFile.length() else 0L
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .header("Accept-Encoding", "identity")
+        if (existingBytes > 0) {
+            requestBuilder.header("Range", "bytes=$existingBytes-")
+        }
+
+        val activeCall = client.newCall(requestBuilder.build())
+        call = activeCall
+        activeCall.execute().use { response ->
+            if (response.code == 416) {
+                partialFile.delete()
+                throw IOException("Server rejected resume offset; restarting download.")
+            }
+            if (!response.isSuccessful) {
+                throw IOException("HTTP ${response.code}: ${response.message}")
+            }
+
+            val append = existingBytes > 0 && response.code == 206
+            if (existingBytes > 0 && !append) {
+                partialFile.delete()
+                existingBytes = 0L
+            }
+
+            val body = response.body ?: throw IOException("Response body is null")
+            val totalSize = totalSizeFromResponse(response, existingBytes, body.contentLength())
+            var downloadedBytes = existingBytes
+            body.byteStream().use { input ->
+                FileOutputStream(partialFile, append).use { output ->
+                    val buffer = ByteArray(512 * 1024)
+                    while (true) {
+                        if (cancelRequested) throw IOException("Download canceled")
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        output.write(buffer, 0, read)
+                        downloadedBytes += read
+                        val progress = if (totalSize > 0) downloadedBytes.toFloat() / totalSize else 0f
+                        onDownload(progress.coerceIn(0f, 1f), downloadedBytes, totalSize)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun totalSizeFromResponse(response: Response, existingBytes: Long, contentLength: Long): Long {
+        val rangeTotal = response.header("Content-Range")
+            ?.substringAfter("/", missingDelimiterValue = "")
+            ?.toLongOrNull()
+        if (rangeTotal != null && rangeTotal > 0) return rangeTotal
+        return if (contentLength >= 0) existingBytes + contentLength else -1
+    }
+
+    private fun fileSha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(512 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     fun cancel() {
+        cancelRequested = true
         call?.cancel()
         this@FileDownloader.call = null
-        downloadManagerId?.let { id ->
-            downloadManager?.remove(id)
-        }
-        downloadManagerId = null
-        downloadManager = null
     }
 
     /**

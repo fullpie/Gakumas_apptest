@@ -213,6 +213,24 @@ jobs:
           echo "Localify module: $localify_url"
           aria2c -x4 "$localify_url" -o "$LOCALIFY_MODULE_APK"
           unzip -t "$LOCALIFY_MODULE_APK" >/dev/null
+          python - "$LOCALIFY_MODULE_APK" <<'PY'
+          import os
+          import sys
+          import zipfile
+
+          apk_path = sys.argv[1]
+          stripped_path = f"{apk_path}.stripped"
+          removed = 0
+          with zipfile.ZipFile(apk_path, "r") as source, zipfile.ZipFile(stripped_path, "w") as target:
+              for entry in source.infolist():
+                  if entry.filename.startswith("assets/gakumas-local/"):
+                      removed += 1
+                      continue
+                  target.writestr(entry, source.read(entry.filename))
+          os.replace(stripped_path, apk_path)
+          print(f"Removed built-in translation asset entries from Localify module: {removed}")
+          PY
+          unzip -t "$LOCALIFY_MODULE_APK" >/dev/null
 
       - name: Download Google Play split APKs
         if: ${{ env.SOURCE == 'google_play' }}
