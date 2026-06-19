@@ -107,7 +107,7 @@ jobs:
 
           release_tag="game-v${game_version}"
           game_apk_name="Gakumas_${game_version}_clean.apk"
-          patched_apk_name="Gakumas_${game_version}_LSPatch_Manager.apk"
+          patched_apk_name="Gakumas_${game_version}_Localify_Embedded.apk"
 
           should_build=true
           if git rev-parse -q --verify "refs/tags/${release_tag}" >/dev/null && [ "${INPUT_FORCE:-false}" != "true" ]; then
@@ -138,8 +138,11 @@ jobs:
       RELEASE_TAG: ${{ needs.check.outputs.release_tag }}
       GAME_APK_NAME: ${{ needs.check.outputs.game_apk_name }}
       PATCHED_APK_NAME: ${{ needs.check.outputs.patched_apk_name }}
+      LOCALIFY_MODULE_APK: "GakumasLocalify_module.apk"
+      PATCH_MODE: "lspatch-embedded"
       SOURCE: ${{ needs.check.outputs.source }}
       XAPK_URL: ${{ inputs.xapk_url }}
+      FORCE: ${{ inputs.force || false }}
       PLAY_EMAIL: ${{ secrets.PLAY_EMAIL }}
       AAS_TOKEN: ${{ secrets.AAS_TOKEN }}
 
@@ -177,6 +180,14 @@ jobs:
             chmod +x apkeep
           fi
           test -f app/libs/lspatch.jar
+
+      - name: Download Localify module APK
+        run: |
+          set -euo pipefail
+          localify_url="$(python .github/scripts/latest_app_asset.py --repository "$GITHUB_REPOSITORY")"
+          echo "Localify module: $localify_url"
+          aria2c -x4 "$localify_url" -o "$LOCALIFY_MODULE_APK"
+          unzip -t "$LOCALIFY_MODULE_APK" >/dev/null
 
       - name: Download Google Play split APKs
         if: ${{ env.SOURCE == 'google_play' }}
@@ -217,7 +228,7 @@ jobs:
           set -euo pipefail
           rm -rf ls_patched
           set +e
-          java -jar app/libs/lspatch.jar -l 2 --manager "$GAME_APK_NAME" -o ls_patched
+          java -jar app/libs/lspatch.jar -l 2 "$GAME_APK_NAME" -m "$LOCALIFY_MODULE_APK" -o ls_patched --force
           lspatch_rc=$?
           set -e
           patched="$(find ls_patched -type f -name '*.apk' -print -quit || true)"
@@ -260,6 +271,7 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --asset "$PATCHED_APK_NAME" \
             --source "$SOURCE" \
+            --patch-mode "$PATCH_MODE" \
             --output gkms-game-patch.json
           cat gkms-game-patch.json
 
@@ -271,6 +283,14 @@ jobs:
             ${{ env.PATCHED_APK_NAME }}
             gkms-game-patch.json
 
+      - name: Delete existing forced release
+        if: ${{ inputs.force }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release delete "$RELEASE_TAG" --cleanup-tag --yes || true
+
       - name: Create game patch release
         uses: softprops/action-gh-release@v2
         with:
@@ -280,7 +300,7 @@ jobs:
             Cloud-patched Gakumas ${{ env.GAME_VERSION }}.
 
             Source: ${{ env.SOURCE }}.
-            Patch mode: LSPatch manager mode. Translation resources are not embedded; users can still choose built-in, API, or custom ZIP language packs in Gakumas Localify.
+            Patch mode: LSPatch embedded mode using the latest Gakumas Localify app release as the module.
 
             Required app package: io.github.chinosk.gakumas.localify.
           make_latest: false

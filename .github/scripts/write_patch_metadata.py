@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--minimum-app-version-code", default="12")
     parser.add_argument("--source", default="unknown")
+    parser.add_argument("--patch-mode", default="lspatch-manager")
     args = parser.parse_args()
 
     asset_name = args.asset.name
@@ -40,7 +41,7 @@ def main() -> int:
         "gameVersion": args.game_version,
         "releaseTag": args.release_tag,
         "source": args.source,
-        "patchMode": "lspatch-manager",
+        "patchMode": args.patch_mode,
         "languagePackMode": "user-selectable",
         "appPackageName": "io.github.chinosk.gakumas.localify",
         "minimumAppVersionCode": int(args.minimum_app_version_code),
