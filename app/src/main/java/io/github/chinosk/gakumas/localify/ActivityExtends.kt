@@ -154,7 +154,7 @@ fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
             "useAPITextureAssets=${programConfig.useAPITextureAssets}, " +
             "exists=${textureUpdateFile.exists()}, size=${if (textureUpdateFile.exists()) textureUpdateFile.length() else 0}, " +
             "path=${textureUpdateFile.absolutePath}")
-    if (config.replaceTexture && textureUpdateFile.exists()) {
+    if (config.replaceTexture && programConfig.useAPITextureAssets && textureUpdateFile.exists()) {
         val textureUri = FileProvider.getUriForFile(
             this,
             "io.github.chinosk.gakumas.localify.fileprovider",

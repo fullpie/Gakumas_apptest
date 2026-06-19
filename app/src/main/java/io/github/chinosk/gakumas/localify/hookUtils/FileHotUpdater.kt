@@ -5,183 +5,180 @@ import android.net.Uri
 import android.util.Log
 import io.github.chinosk.gakumas.localify.GakumasHookMain
 import io.github.chinosk.gakumas.localify.TAG
-import java.io.BufferedReader
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.InputStream
-import java.io.InputStreamReader
-import java.util.zip.ZipInputStream
+import java.io.IOException
+import java.util.zip.ZipFile
 
 object FileHotUpdater {
-    private fun unzip(zipFile: InputStream, destDir: String, matchNamePrefix: String = "",
-                      replaceMatchNamePrefix: String? = null) {
-        val buffer = ByteArray(1024)
-        try {
-            val folder = File(destDir)
-            if (!folder.exists()) {
-                folder.mkdir()
+    private const val VERSION_FILE_NAME = "version.txt"
+
+    private fun normalizedEntryName(name: String): String {
+        return name.replace('\\', '/').trimStart('/')
+    }
+
+    private fun findZipResourceRoot(zipFile: ZipFile): String? {
+        val localFilesMarker = "local-files/"
+        val entries = zipFile.entries()
+        var versionPrefix: String? = null
+
+        while (entries.hasMoreElements()) {
+            val entry = entries.nextElement()
+            val name = normalizedEntryName(entry.name)
+            if (name.isEmpty()) continue
+
+            val localFilesIndex = name.indexOf(localFilesMarker)
+            if (localFilesIndex >= 0) {
+                return name.substring(0, localFilesIndex)
             }
 
-            val zipIn = ZipInputStream(zipFile)
-
-            var entry = zipIn.nextEntry
-            while (entry != null) {
-                var writeEntryName = entry.name
-                if (matchNamePrefix.isNotEmpty()) {
-                    if (!entry.name.startsWith(matchNamePrefix)) {
-                        zipIn.closeEntry()
-                        entry = zipIn.nextEntry
-                        continue
-                    }
-                    replaceMatchNamePrefix?.let {
-                        writeEntryName = replaceMatchNamePrefix + writeEntryName.substring(
-                            matchNamePrefix.length, writeEntryName.length
-                        )
-                    }
-                }
-                val filePath = destDir + File.separator + writeEntryName
-                if (!entry.isDirectory) {
-                    extractFile(zipIn, filePath, buffer)
-                } else {
-                    val dir = File(filePath)
-                    dir.mkdirs()
-                }
-                zipIn.closeEntry()
-                entry = zipIn.nextEntry
+            if (name == VERSION_FILE_NAME || name.endsWith("/$VERSION_FILE_NAME")) {
+                versionPrefix = name.substring(0, name.length - VERSION_FILE_NAME.length)
             }
-            zipIn.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "unzip error: $e")
         }
+
+        return versionPrefix
     }
 
-    private fun unzip(zipFile: String, destDir: String, matchNamePrefix: String = "") {
-        return unzip(FileInputStream(zipFile), destDir, matchNamePrefix)
-    }
-
-    private fun extractFile(zipIn: ZipInputStream, filePath: String, buffer: ByteArray) {
-        val fout = FileOutputStream(filePath)
-        var length: Int
-        while (zipIn.read(buffer).also { length = it } > 0) {
-            fout.write(buffer, 0, length)
+    private fun safeOutputFile(baseDir: File, relativePath: String): File {
+        val targetFile = File(baseDir, relativePath)
+        val baseCanonical = baseDir.canonicalFile
+        val targetCanonical = targetFile.canonicalFile
+        val basePath = baseCanonical.path + File.separator
+        if (targetCanonical.path != baseCanonical.path && !targetCanonical.path.startsWith(basePath)) {
+            throw IOException("Unsafe zip entry path: $relativePath")
         }
-        fout.close()
+        return targetFile
     }
 
-    private fun getZipResourcePath(zipFile: InputStream): String? {
-        try {
-            val zipIn = ZipInputStream(zipFile)
+    private fun extractZipRoot(zipFile: ZipFile, rootPrefix: String, tempDir: File) {
+        if (tempDir.exists()) {
+            tempDir.deleteRecursively()
+        }
+        if (!tempDir.mkdirs()) {
+            throw IOException("Failed to create temp resource directory: $tempDir")
+        }
 
-            var entry = zipIn.nextEntry
-            while (entry != null) {
-                if (entry.isDirectory) {
-                    if (entry.name.endsWith("local-files/")) {
-                        zipIn.close()
-                        var retPath = File(entry.name, "..").canonicalPath
-                        if (retPath.startsWith("/")) retPath = retPath.substring(1)
-                        return retPath
-                    }
-                }
-                zipIn.closeEntry()
-                entry = zipIn.nextEntry
+        val entries = zipFile.entries()
+        while (entries.hasMoreElements()) {
+            val entry = entries.nextElement()
+            val name = normalizedEntryName(entry.name)
+            if (!name.startsWith(rootPrefix)) continue
+
+            val relativePath = name.substring(rootPrefix.length)
+            if (relativePath.isEmpty()) continue
+
+            val targetFile = safeOutputFile(tempDir, relativePath)
+            if (entry.isDirectory) {
+                targetFile.mkdirs()
+                continue
             }
-            zipIn.close()
-        }
-        catch (e: Exception) {
-            Log.e(TAG, "getZipResourcePath error: $e")
-        }
-        return null
-    }
 
-    private fun getZipResourceVersion(zipFile: InputStream, basePath: String): String? {
-        try {
-            val targetVersionFilePath = File(basePath, "version.txt").canonicalPath
-
-            val zipIn = ZipInputStream(zipFile)
-            var entry = zipIn.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory) {
-                    if ("/${entry.name}" == targetVersionFilePath) {
-                        Log.d(TAG, "targetVersionFilePath: $targetVersionFilePath")
-                        val reader = BufferedReader(InputStreamReader(zipIn))
-                        val versionContent = reader.use { it.readText() }
-                        Log.d(TAG, "versionContent: $versionContent")
-                        zipIn.close()
-                        return versionContent
-                    }
+            targetFile.parentFile?.mkdirs()
+            zipFile.getInputStream(entry).use { input ->
+                FileOutputStream(targetFile).use { output ->
+                    input.copyTo(output)
                 }
-                zipIn.closeEntry()
-                entry = zipIn.nextEntry
             }
-            zipIn.close()
         }
-        catch (e: Exception) {
-            Log.e(TAG, "getZipResourceVersion error: $e")
+
+        val localFilesDir = File(tempDir, "local-files")
+        if (!localFilesDir.isDirectory || localFilesDir.listFiles().isNullOrEmpty()) {
+            throw IOException("local-files not found in translation zip")
         }
-        return null
     }
 
-    private fun getZipResourceVersion(zipFile: String, basePath: String): String? {
-        return getZipResourceVersion(FileInputStream(zipFile), basePath)
+    private fun installExtractedResource(filesDir: File, tempDir: File) {
+        val finalBaseDir = File(filesDir, FilesChecker.localizationFilesDir)
+        if (!finalBaseDir.exists() && !finalBaseDir.mkdirs()) {
+            throw IOException("Failed to create resource directory: $finalBaseDir")
+        }
+
+        if (!FilesChecker.cleanAssets(filesDir)) {
+            throw IOException("Failed to clean old local-files directory")
+        }
+
+        val children = tempDir.listFiles() ?: emptyArray()
+        for (child in children) {
+            if (child.name == "texture2d") {
+                continue
+            }
+
+            val target = File(finalBaseDir, child.name)
+            if (target.exists() && !target.deleteRecursively()) {
+                throw IOException("Failed to replace old resource path: $target")
+            }
+
+            if (child.isDirectory) {
+                if (!child.copyRecursively(target, overwrite = true)) {
+                    throw IOException("Failed to copy resource directory: ${child.name}")
+                }
+            }
+            else {
+                child.copyTo(target, overwrite = true)
+            }
+        }
     }
 
     fun getZipResourceVersion(zipFile: String): String? {
         return try {
-            val basePath = getZipResourcePath(FileInputStream(zipFile))
-            basePath?.let { getZipResourceVersion(zipFile, it) }
+            val file = File(zipFile)
+            if (!file.isFile) return null
+
+            ZipFile(file).use { zip ->
+                val rootPrefix = findZipResourceRoot(zip) ?: return null
+                val entry = zip.getEntry("${rootPrefix}$VERSION_FILE_NAME") ?: return null
+                zip.getInputStream(entry).bufferedReader().use { it.readText().trim() }
+            }
         }
-        catch (_: Exception) {
+        catch (e: Exception) {
+            Log.e(TAG, "getZipResourceVersion error: $e")
             null
         }
     }
 
     fun updateFilesFromZip(activity: Activity, zipFileUri: Uri, filesDir: File, deleteAfterUpdate: Boolean) {
+        val tempZipFile = File(filesDir, "translation_update.zip")
+        val tempExtractDir = File(filesDir, "${FilesChecker.localizationFilesDir}.tmp")
+
         try {
             GakumasHookMain.showToast("Updating files from zip...")
 
-            var basePath: String?
-            activity.contentResolver.openInputStream(zipFileUri).use {
-                basePath = it?.let { getZipResourcePath(it) }
-                if (basePath == null) {
-                    Log.e(TAG, "getZipResourcePath failed.")
-                    return@updateFilesFromZip
+            activity.contentResolver.openInputStream(zipFileUri).use { input ->
+                if (input == null) {
+                    throw IOException("Update zip openInputStream failed")
+                }
+                FileOutputStream(tempZipFile).use { output ->
+                    input.copyTo(output)
                 }
             }
 
-            /*
-            var resourceVersion: String?
-            activity.contentResolver.openInputStream(zipFileUri).use {
-                resourceVersion = it?.let { getZipResourceVersion(it, basePath!!) }
-                Log.d(TAG, "resourceVersion: $resourceVersion ($basePath)")
-            }*/
-
-            if (!FilesChecker.cleanAssets(filesDir)) {
-                Log.e(TAG, "cleanAssets failed before zip update")
-                GakumasHookMain.showToast("Cleaning old translation files failed.")
-                return@updateFilesFromZip
+            ZipFile(tempZipFile).use { zip ->
+                val rootPrefix = findZipResourceRoot(zip)
+                    ?: throw IOException("local-files not found in translation zip")
+                extractZipRoot(zip, rootPrefix, tempExtractDir)
             }
 
-            activity.contentResolver.openInputStream(zipFileUri).use {
-                it?.let {
-                    unzip(it, File(filesDir, FilesChecker.localizationFilesDir).absolutePath,
-                        basePath!!, "../gakumas-local/")
-                    if (deleteAfterUpdate) {
-                        activity.contentResolver.delete(zipFileUri, null, null)
-                    }
-                    GakumasHookMain.showToast("Update success.")
-                }
-            }
+            installExtractedResource(filesDir, tempExtractDir)
+            tempZipFile.delete()
+            tempExtractDir.deleteRecursively()
 
+            if (deleteAfterUpdate) {
+                activity.contentResolver.delete(zipFileUri, null, null)
+            }
+            GakumasHookMain.showToast("Update success.")
         }
         catch (e: java.io.FileNotFoundException) {
+            tempZipFile.delete()
+            tempExtractDir.deleteRecursively()
             Log.i(TAG, "updateFilesFromZip - file not found: $e")
             GakumasHookMain.showToast("Update file not found.")
         }
         catch (e: Exception) {
+            tempZipFile.delete()
+            tempExtractDir.deleteRecursively()
             Log.e(TAG, "updateFilesFromZip failed: $e")
             GakumasHookMain.showToast("Updating files failed: $e")
         }
     }
-
 }
