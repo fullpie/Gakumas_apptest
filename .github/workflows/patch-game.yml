@@ -330,12 +330,24 @@ jobs:
         if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
           set -euo pipefail
+          app_version_code="$(python - <<'PY'
+          import pathlib
+          import re
+
+          text = pathlib.Path("app/build.gradle").read_text(encoding="utf-8")
+          match = re.search(r"^\s*versionCode\s+(\d+)\s*$", text, re.MULTILINE)
+          if not match:
+              raise SystemExit("Could not read app versionCode from app/build.gradle")
+          print(match.group(1))
+          PY
+          )"
           python .github/scripts/write_patch_metadata.py \
             --game-package "$GAME_ID" \
             --game-version "$GAME_VERSION" \
             --release-tag "$RELEASE_TAG" \
             --repository "$GITHUB_REPOSITORY" \
             --asset "$PATCHED_APK_NAME" \
+            --minimum-app-version-code "$app_version_code" \
             --source "$SOURCE" \
             --patch-mode "$PATCH_MODE" \
             --output gkms-game-patch.json
