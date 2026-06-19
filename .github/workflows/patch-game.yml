@@ -8,13 +8,14 @@ on:
       source:
         description: "Game APK source."
         required: true
-        default: "manual_xapk"
+        default: "apkpure"
         type: choice
         options:
+          - apkpure
           - manual_xapk
           - google_play
       xapk_url:
-        description: "Direct .xapk URL, for manual_xapk source. Use the real download URL, not the APKPure page URL."
+        description: "Direct .xapk URL, for manual_xapk source. Leave empty for apkpure."
         required: false
         type: string
       game_version:
@@ -51,6 +52,8 @@ jobs:
       game_apk_name: ${{ steps.plan.outputs.game_apk_name }}
       patched_apk_name: ${{ steps.plan.outputs.patched_apk_name }}
       source: ${{ steps.plan.outputs.source }}
+      xapk_url: ${{ steps.plan.outputs.xapk_url }}
+      version_known: ${{ steps.plan.outputs.version_known }}
 
     steps:
       - uses: actions/checkout@v5
@@ -73,8 +76,8 @@ jobs:
           HAS_AAS_TOKEN: ${{ secrets.AAS_TOKEN != '' }}
         run: |
           set -euo pipefail
-          source="${INPUT_SOURCE:-google_play}"
-          if [ "$source" != "google_play" ] && [ "$source" != "manual_xapk" ]; then
+          source="${INPUT_SOURCE:-apkpure}"
+          if [ "$source" != "google_play" ] && [ "$source" != "manual_xapk" ] && [ "$source" != "apkpure" ]; then
             echo "Unsupported source: $source"
             exit 1
           fi
@@ -94,10 +97,23 @@ jobs:
             fi
           fi
 
-          if [ "$source" = "manual_xapk" ]; then
+          xapk_url="${INPUT_XAPK_URL:-}"
+          version_known=true
+          if [ "$source" = "apkpure" ]; then
+            if apkpure_info="$(python .github/scripts/apkpure_latest.py --package "$GAME_ID")"; then
+              game_version="$(printf '%s' "$apkpure_info" | python -c "import json,sys; print(json.load(sys.stdin)['version'])")"
+              xapk_url="$(printf '%s' "$apkpure_info" | python -c "import json,sys; print(json.load(sys.stdin)['xapk_url'])")"
+            else
+              echo "::warning::Could not probe APKPure version before download; build job will read the XAPK manifest."
+              game_version="latest"
+              xapk_url="https://d.apkpure.com/b/XAPK/${GAME_ID}?version=latest"
+              version_known=false
+            fi
+          elif [ "$source" = "manual_xapk" ]; then
             test -n "${INPUT_XAPK_URL:-}" || { echo "xapk_url is required for manual_xapk"; exit 1; }
             test -n "${INPUT_GAME_VERSION:-}" || { echo "game_version is required for manual_xapk"; exit 1; }
             game_version="$INPUT_GAME_VERSION"
+            xapk_url="$INPUT_XAPK_URL"
           else
             game_version="$(python .github/scripts/google_play_version.py --package "$GAME_ID")"
             if [ -n "${INPUT_GAME_VERSION:-}" ]; then
@@ -110,7 +126,7 @@ jobs:
           patched_apk_name="Gakumas_${game_version}_Localify_Embedded.apk"
 
           should_build=true
-          if git rev-parse -q --verify "refs/tags/${release_tag}" >/dev/null && [ "${INPUT_FORCE:-false}" != "true" ]; then
+          if [ "$version_known" = "true" ] && git rev-parse -q --verify "refs/tags/${release_tag}" >/dev/null && [ "${INPUT_FORCE:-false}" != "true" ]; then
             should_build=false
           fi
 
@@ -121,6 +137,8 @@ jobs:
             echo "game_apk_name=$game_apk_name"
             echo "patched_apk_name=$patched_apk_name"
             echo "source=$source"
+            echo "xapk_url=$xapk_url"
+            echo "version_known=$version_known"
           } >> "$GITHUB_OUTPUT"
 
           echo "Source: $source"
@@ -141,7 +159,8 @@ jobs:
       LOCALIFY_MODULE_APK: "GakumasLocalify_module.apk"
       PATCH_MODE: "lspatch-embedded"
       SOURCE: ${{ needs.check.outputs.source }}
-      XAPK_URL: ${{ inputs.xapk_url }}
+      XAPK_URL: ${{ needs.check.outputs.xapk_url }}
+      VERSION_KNOWN: ${{ needs.check.outputs.version_known }}
       FORCE: ${{ inputs.force || false }}
       PLAY_EMAIL: ${{ secrets.PLAY_EMAIL }}
       AAS_TOKEN: ${{ secrets.AAS_TOKEN }}
@@ -202,28 +221,50 @@ jobs:
             .
           find "$GAME_ID" -maxdepth 2 -type f -printf "%p %s bytes\n" | sort
 
-      - name: Download manual XAPK
-        if: ${{ env.SOURCE == 'manual_xapk' }}
+      - name: Download XAPK
+        if: ${{ env.SOURCE == 'manual_xapk' || env.SOURCE == 'apkpure' }}
         run: |
           set -euo pipefail
           test -n "${XAPK_URL:-}" || { echo "XAPK_URL is required"; exit 1; }
           rm -rf "$GAME_ID" xapk_unpack source.xapk
           aria2c -x4 "$XAPK_URL" -o source.xapk
           unzip -q source.xapk -d xapk_unpack
-          python .github/scripts/prepare_xapk.py \
+          expected_version="$GAME_VERSION"
+          if [ "$VERSION_KNOWN" != "true" ]; then
+            expected_version=""
+          fi
+          summary="$(python .github/scripts/prepare_xapk.py \
             --root xapk_unpack \
             --package "$GAME_ID" \
-            --version "$GAME_VERSION" \
-            --output "$GAME_ID"
+            --version "$expected_version" \
+            --output "$GAME_ID")"
+          printf '%s\n' "$summary"
+          actual_version="$(printf '%s' "$summary" | python -c "import json,sys; print(json.load(sys.stdin).get('version_name') or '')")"
+          if [ -n "$actual_version" ] && [ "$actual_version" != "$GAME_VERSION" ]; then
+            {
+              echo "GAME_VERSION=$actual_version"
+              echo "RELEASE_TAG=game-v${actual_version}"
+              echo "GAME_APK_NAME=Gakumas_${actual_version}_clean.apk"
+              echo "PATCHED_APK_NAME=Gakumas_${actual_version}_Localify_Embedded.apk"
+            } >> "$GITHUB_ENV"
+          fi
+          if git rev-parse -q --verify "refs/tags/game-v${actual_version:-$GAME_VERSION}" >/dev/null && [ "$FORCE" != "true" ]; then
+            echo "Game release already exists; skipping patch build."
+            echo "SHOULD_RELEASE=false" >> "$GITHUB_ENV"
+          else
+            echo "SHOULD_RELEASE=true" >> "$GITHUB_ENV"
+          fi
           find "$GAME_ID" -maxdepth 2 -type f -printf "%p %s bytes\n" | sort
 
       - name: Merge split APKs
+        if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
           set -euo pipefail
           java -jar APKEditor.jar m -i "$GAME_ID" -o "$GAME_APK_NAME"
           unzip -t "$GAME_APK_NAME" >/dev/null
 
       - name: Patch merged APK
+        if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
           set -euo pipefail
           rm -rf ls_patched
@@ -262,6 +303,7 @@ jobs:
           fi
 
       - name: Write metadata
+        if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
           set -euo pipefail
           python .github/scripts/write_patch_metadata.py \
@@ -276,6 +318,7 @@ jobs:
           cat gkms-game-patch.json
 
       - name: Upload workflow artifact
+        if: ${{ env.SHOULD_RELEASE != 'false' }}
         uses: actions/upload-artifact@v6
         with:
           name: Gakumas-Patched-Game-${{ env.GAME_VERSION }}
@@ -284,7 +327,7 @@ jobs:
             gkms-game-patch.json
 
       - name: Delete existing forced release
-        if: ${{ inputs.force }}
+        if: ${{ inputs.force && env.SHOULD_RELEASE != 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -292,6 +335,7 @@ jobs:
           gh release delete "$RELEASE_TAG" --cleanup-tag --yes || true
 
       - name: Create game patch release
+        if: ${{ env.SHOULD_RELEASE != 'false' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}

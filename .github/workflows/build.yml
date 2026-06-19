@@ -1,6 +1,31 @@
 name: Android CI
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "app-v*"
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "build.gradle"
+      - "settings.gradle"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "build.gradle"
+      - "settings.gradle"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -98,18 +123,24 @@ jobs:
         name: GakumasLocalify-Unsigned-apk
         path: app/build/outputs/apk/debug/app-debug.apk
 
-    - uses: r0adkll/sign-android-release@v1
-      name: Sign app APK
+    - name: Sign app APK
       if: ${{ env.KEYSTOREB64 != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_PASSWORD != '' }}
       id: sign_app
-      with:
-        releaseDirectory: app/build/outputs/apk/debug
-        signingKeyBase64: ${{ env.KEYSTOREB64 }}
-        alias: ${{ env.ANDROID_KEY_ALIAS }}
-        keyStorePassword: ${{ env.ANDROID_KEYSTORE_PASSWORD }}
-        keyPassword: ${{ env.ANDROID_KEY_PASSWORD }}
-      env:
-        BUILD_TOOLS_VERSION: "34.0.0"
+      run: |
+        set -euo pipefail
+        keystore="$RUNNER_TEMP/gkms-upload.p12"
+        signed_apk="$RUNNER_TEMP/GakumasLocalify-signed.apk"
+        printf '%s' "$KEYSTOREB64" | base64 -d > "$keystore"
+        apksigner sign \
+          --ks "$keystore" \
+          --ks-type PKCS12 \
+          --ks-key-alias "$ANDROID_KEY_ALIAS" \
+          --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+          --key-pass "pass:$ANDROID_KEY_PASSWORD" \
+          --out "$signed_apk" \
+          app/build/outputs/apk/debug/app-debug.apk
+        apksigner verify --verbose "$signed_apk"
+        echo "signedReleaseFile=$signed_apk" >> "$GITHUB_OUTPUT"
 
     - uses: actions/upload-artifact@v6
       if: ${{ steps.sign_app.outputs.signedReleaseFile != '' }}

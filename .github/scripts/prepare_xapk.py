@@ -63,7 +63,7 @@ def main() -> int:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--package", required=True)
-    parser.add_argument("--version", required=True)
+    parser.add_argument("--version", default="")
     args = parser.parse_args()
 
     manifest = find_manifest(args.root)
@@ -72,7 +72,7 @@ def main() -> int:
 
     if package_name and package_name != args.package:
         raise RuntimeError(f"Unexpected package name: {package_name} != {args.package}")
-    if version_name and version_name != args.version:
+    if args.version and version_name and version_name != args.version:
         raise RuntimeError(f"Unexpected version: {version_name} != {args.version}")
 
     copied = copy_ordered_apks(args.root, args.output, manifest_file_names(manifest))
