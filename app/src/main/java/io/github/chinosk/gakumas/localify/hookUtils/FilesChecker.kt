@@ -27,6 +27,11 @@ object FilesChecker {
     }
 
     fun checkFiles() {
+        if (!hasBuiltInAssets()) {
+            Log.i("GakumasLocal", "No built-in localization assets found; keeping existing local files")
+            return
+        }
+
         val installedVersion = getInstalledVersion()
         val pluginVersion = getPluginVersion()
         Log.d("GakumasLocal", "installedVer: $installedVersion, pluginVer: $pluginVersion")
@@ -41,6 +46,12 @@ object FilesChecker {
 
     fun updateFiles() {
         if (filesUpdated) return
+
+        if (!hasBuiltInAssets()) {
+            Log.i("GakumasLocal", "No built-in localization assets found; skip built-in update")
+            return
+        }
+
         filesUpdated = true
 
         Log.i("GakumasLocal", "Updating files...")
@@ -89,13 +100,25 @@ object FilesChecker {
     fun getPluginVersion(): String {
         val assets = XModuleResources.createInstance(modulePath, null).assets
 
-        for (i in assets.list(localizationFilesDir)!!) {
+        for (i in assets.list(localizationFilesDir) ?: emptyArray()) {
             if (i.toString() == "version.txt") {
                 val stream = assets.open("$localizationFilesDir/$i")
                 return convertToString(stream).trim()
             }
         }
         return "0.0"
+    }
+
+    private fun hasBuiltInAssets(): Boolean {
+        if (!::modulePath.isInitialized) return false
+        return try {
+            val assets = XModuleResources.createInstance(modulePath, null).assets
+            val assetFiles = assets.list(localizationFilesDir) ?: return false
+            assetFiles.isNotEmpty()
+        } catch (e: Exception) {
+            Log.i("GakumasLocal", "Built-in localization asset check failed: $e")
+            false
+        }
     }
 
     fun getInstalledVersion(): String {

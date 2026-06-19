@@ -15,8 +15,8 @@ android {
         applicationId "io.github.chinosk.gakumas.localify"
         minSdk 29
         targetSdk 34
-        versionCode 17
-        versionName "v3.2.5"
+        versionCode 18
+        versionName "v3.2.6"
         buildConfigField "String", "VERSION_NAME", "\"${versionName}\""
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"

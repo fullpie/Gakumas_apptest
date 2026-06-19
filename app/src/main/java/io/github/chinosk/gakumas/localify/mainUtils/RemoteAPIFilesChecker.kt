@@ -38,6 +38,21 @@ object RemoteAPIFilesChecker {
         return dataFile
     }
 
+    fun saveDownloadedFile(context: Context, dataFile: File, version: String): File {
+        val basePath = File(context.filesDir, BASEPATH)
+        if (!basePath.exists()) {
+            basePath.mkdirs()
+        }
+        val targetFile = File(basePath, "remote.zip")
+        if (dataFile.absolutePath != targetFile.absolutePath) {
+            if (targetFile.exists()) targetFile.delete()
+            dataFile.copyTo(targetFile, overwrite = true)
+            dataFile.delete()
+        }
+        File(basePath, "version.txt").writeText(version)
+        return targetFile
+    }
+
     fun checkUpdateLocalAssets(context: Context, apiURL: String,
                                onFailed: (Int, String) -> Unit,
                                onResult: (data: GithubReleaseModel, localVersion: String?) -> Unit) {
@@ -112,16 +127,21 @@ object RemoteAPIFilesChecker {
                                 if (releaseVersion != localVersion) {
                                     for (asset in releaseData.assets) {
                                         if (!asset.name.endsWith(".zip")) continue
-                                        FileDownloader.downloadFile(asset.browser_download_url,
-                                            onDownload, {data ->
+                                        val targetFile = File(context.filesDir, "$BASEPATH/remote.zip")
+                                        FileDownloader.downloadFileResumable(
+                                            url = asset.browser_download_url,
+                                            outputFile = targetFile,
+                                            onDownload = onDownload,
+                                            onSuccess = { data ->
                                                 runCatching {
-                                                    val saveFile = saveDownloadData(context, data, releaseVersion)
+                                                    val saveFile = saveDownloadedFile(context, data, releaseVersion)
                                                     onSuccess(saveFile, releaseVersion)
                                                 }.onFailure { e ->
                                                     onFailed(-1, e.toString())
                                                 }
                                             },
-                                            onFailed)
+                                            onFailed = onFailed
+                                        )
                                         break
                                     }
                                 }

@@ -13,10 +13,10 @@ import kotlinx.serialization.json.jsonObject
 
 @Serializable
 data class ProgramConfig(
-    var checkBuiltInAssets: Boolean = true,
+    var checkBuiltInAssets: Boolean = false,
     var transRemoteZipUrl: String = "",
     var useRemoteAssets: Boolean = false,
-    var useAPIAssets: Boolean = false,
+    var useAPIAssets: Boolean = true,
     var useAPIAssetsURL: String = "",
     var delRemoteAfterUpdate: Boolean = true,
     var cleanLocalAssets: Boolean = false,
