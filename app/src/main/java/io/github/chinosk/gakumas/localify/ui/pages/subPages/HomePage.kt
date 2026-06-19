@@ -188,7 +188,15 @@ fun HomePage(modifier: Modifier = Modifier,
             } else {
                 "not patched"
             }
-            lines.add("Game: $installed ($patchState) -> ${game.metadata.gameVersion} (${game.metadata.patchMode})")
+            val packageState = if (game.installedSha256 != null &&
+                game.asset.sha256 != null &&
+                !game.installedSha256.equals(game.asset.sha256, ignoreCase = true)
+            ) {
+                ", older package"
+            } else {
+                ""
+            }
+            lines.add("Game: $installed ($patchState$packageState) -> ${game.metadata.gameVersion} (${game.metadata.patchMode})")
         }
         else {
             lines.add("Game patch: current")

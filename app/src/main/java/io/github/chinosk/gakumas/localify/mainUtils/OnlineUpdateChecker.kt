@@ -15,6 +15,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import java.util.zip.ZipFile
@@ -81,7 +83,8 @@ data class GamePatchUpdate(
     val asset: OnlinePatchAsset,
     val installedVersionName: String?,
     val installedIsPatched: Boolean,
-    val installedPatchMode: String?
+    val installedPatchMode: String?,
+    val installedSha256: String?
 )
 
 
@@ -176,9 +179,18 @@ object OnlineUpdateChecker {
             val installedVersion = getPackageVersionName(context, metadata.gamePackageName)
             val installedIsPatched = isPackagePatched(context, metadata.gamePackageName)
             val installedPatchMode = getInstalledPatchMode(context, metadata.gamePackageName)
+            val installedSha256 = if (installedIsPatched) {
+                getInstalledPackageSha256(context, metadata.gamePackageName)
+            } else {
+                null
+            }
+            val installedMatchesRelease = patchedApk.sha256?.let { expected ->
+                installedSha256?.equals(expected, ignoreCase = true) ?: true
+            } ?: true
             if (installedVersion != metadata.gameVersion ||
                 !installedIsPatched ||
-                installedPatchMode != metadata.patchMode
+                installedPatchMode != metadata.patchMode ||
+                !installedMatchesRelease
             ) {
                 return GamePatchUpdate(
                     release,
@@ -186,7 +198,8 @@ object OnlineUpdateChecker {
                     patchedApk,
                     installedVersion,
                     installedIsPatched,
-                    installedPatchMode
+                    installedPatchMode,
+                    installedSha256
                 )
             }
         }
@@ -235,6 +248,39 @@ object OnlineUpdateChecker {
                 val useManager = config["useManager"]?.jsonPrimitive?.booleanOrNull ?: false
                 if (useManager) "lspatch-manager" else "lspatch-embedded"
             }
+        }.getOrNull()
+    }
+
+    private fun getInstalledPackageSha256(context: Context, packageName: String): String? {
+        return runCatching {
+            val appInfo = getApplicationInfo(context, packageName)
+            val source = File(appInfo.sourceDir)
+            if (!source.isFile) return@runCatching null
+
+            val packageInfo = context.packageManager.getPackageInfo(packageName, 0)
+            val cacheKey = "${packageName}:${packageInfo.lastUpdateTime}:${source.length()}:${source.lastModified()}"
+            val prefs = context.getSharedPreferences("online_update_checker", Context.MODE_PRIVATE)
+            val keyName = "sha256_key_$packageName"
+            val valueName = "sha256_value_$packageName"
+            if (prefs.getString(keyName, null) == cacheKey) {
+                return@runCatching prefs.getString(valueName, null)
+            }
+
+            val digest = MessageDigest.getInstance("SHA-256")
+            source.inputStream().use { input ->
+                val buffer = ByteArray(128 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read <= 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            val sha256 = digest.digest().joinToString("") { "%02x".format(it) }
+            prefs.edit()
+                .putString(keyName, cacheKey)
+                .putString(valueName, sha256)
+                .apply()
+            sha256
         }.getOrNull()
     }
 
