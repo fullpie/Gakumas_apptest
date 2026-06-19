@@ -44,8 +44,12 @@ import io.github.chinosk.gakumas.localify.getProgramConfigState
 import io.github.chinosk.gakumas.localify.getProgramDownloadAbleState
 import io.github.chinosk.gakumas.localify.getProgramDownloadErrorStringState
 import io.github.chinosk.gakumas.localify.getProgramDownloadState
+import io.github.chinosk.gakumas.localify.getProgramLocalTextureResourceVersionState
 import io.github.chinosk.gakumas.localify.getProgramLocalResourceVersionState
 import io.github.chinosk.gakumas.localify.getProgramLocalAPIResourceVersionState
+import io.github.chinosk.gakumas.localify.getProgramTextureDownloadAbleState
+import io.github.chinosk.gakumas.localify.getProgramTextureDownloadErrorStringState
+import io.github.chinosk.gakumas.localify.getProgramTextureDownloadState
 import io.github.chinosk.gakumas.localify.hookUtils.FileHotUpdater
 import io.github.chinosk.gakumas.localify.mainUtils.ApkInstallUtils
 import io.github.chinosk.gakumas.localify.mainUtils.FileDownloader
@@ -54,6 +58,7 @@ import io.github.chinosk.gakumas.localify.mainUtils.AppUpdate
 import io.github.chinosk.gakumas.localify.mainUtils.OnlineUpdateChecker
 import io.github.chinosk.gakumas.localify.mainUtils.OnlineUpdateResult
 import io.github.chinosk.gakumas.localify.mainUtils.RemoteAPIFilesChecker
+import io.github.chinosk.gakumas.localify.mainUtils.TextureResourceUpdater
 import io.github.chinosk.gakumas.localify.mainUtils.TimeUtils
 import io.github.chinosk.gakumas.localify.models.GakumasConfig
 import io.github.chinosk.gakumas.localify.models.ResourceCollapsibleBoxViewModel
@@ -81,6 +86,10 @@ fun HomePage(modifier: Modifier = Modifier,
     val localResourceVersion by getProgramLocalResourceVersionState(context)
     val localAPIResourceVersion by getProgramLocalAPIResourceVersionState(context)
     val downloadErrorString by getProgramDownloadErrorStringState(context)
+    val textureDownloadProgress by getProgramTextureDownloadState(context)
+    val textureDownloadAble by getProgramTextureDownloadAbleState(context)
+    val localTextureResourceVersion by getProgramLocalTextureResourceVersionState(context)
+    val textureDownloadErrorString by getProgramTextureDownloadErrorStringState(context)
     var isFirstTimeInThisPage by rememberSaveable { mutableStateOf(true) }
 
     // val scrollState = rememberScrollState()
@@ -291,7 +300,8 @@ fun HomePage(modifier: Modifier = Modifier,
             })
     }
 
-    fun onClickDownload(isZipResource: Boolean, isHumanClick: Boolean = true) {
+    fun onClickDownload(isZipResource: Boolean, isHumanClick: Boolean = true,
+                        onFinished: (() -> Unit)? = null) {
         context?.mainPageAssetsViewDataUpdate(
             downloadAbleState = false,
             errorString = "",
@@ -299,6 +309,7 @@ fun HomePage(modifier: Modifier = Modifier,
         )
         if (isZipResource) {
             zipResourceDownload()
+            onFinished?.invoke()
         }
         else {
             RemoteAPIFilesChecker.checkUpdateLocalAssets(context!!,
@@ -310,6 +321,7 @@ fun HomePage(modifier: Modifier = Modifier,
                         downloadProgressState = -1f
                     )
                     context.mainUIConfirmStatUpdate(true, "Error", reason)
+                    onFinished?.invoke()
                 },
                 onResult = { data, localVersion ->
                     if (!isHumanClick) {
@@ -319,6 +331,7 @@ fun HomePage(modifier: Modifier = Modifier,
                                 errorString = "",
                                 downloadProgressState = -1f
                             )
+                            onFinished?.invoke()
                             return@checkUpdateLocalAssets
                         }
                     }
@@ -330,10 +343,13 @@ fun HomePage(modifier: Modifier = Modifier,
                                 onDownload = { progress, _, _ ->
                                     context.mainPageAssetsViewDataUpdate(downloadProgressState = progress)
                                 },
-                                onFailed = { _, reason -> context.mainPageAssetsViewDataUpdate(
-                                    downloadAbleState = true,
-                                    errorString = reason,
-                                )},
+                                onFailed = { _, reason ->
+                                    context.mainPageAssetsViewDataUpdate(
+                                        downloadAbleState = true,
+                                        errorString = reason,
+                                    )
+                                    onFinished?.invoke()
+                                },
                                 onSuccess = { saveFile, releaseVersion ->
                                     context.mainPageAssetsViewDataUpdate(
                                         downloadAbleState = true,
@@ -345,6 +361,7 @@ fun HomePage(modifier: Modifier = Modifier,
                                     )
                                     context.saveProgramConfig()
                                     Log.d(TAG, "saved: $releaseVersion $saveFile")
+                                    onFinished?.invoke()
                                 })
                         },
                         onCancel = {
@@ -353,10 +370,90 @@ fun HomePage(modifier: Modifier = Modifier,
                                 errorString = "",
                                 downloadProgressState = -1f
                             )
+                            onFinished?.invoke()
                         }
                         )
                 })
         }
+    }
+
+    fun startTextureResourceUpdate() {
+        context?.mainPageTextureAssetsViewDataUpdate(
+            downloadAbleState = false,
+            errorString = "",
+            downloadProgressState = -1f
+        )
+        TextureResourceUpdater.updateTextureAssets(context!!,
+            programConfig.value.useAPITextureAssetsURL,
+            programConfig.value.delTextureRemoteAfterUpdate,
+            onDownload = { progress, _, _ ->
+                context.mainPageTextureAssetsViewDataUpdate(downloadProgressState = progress)
+            },
+            onFailed = { _, reason ->
+                context.mainPageTextureAssetsViewDataUpdate(
+                    downloadAbleState = true,
+                    errorString = reason,
+                )
+            },
+            onSuccess = { releaseVersion, changed ->
+                context.mainPageTextureAssetsViewDataUpdate(
+                    downloadAbleState = true,
+                    errorString = "",
+                    downloadProgressState = -1f,
+                    localTextureResourceVersion = TextureResourceUpdater.getLocalVersion(context)
+                        ?: releaseVersion
+                )
+                context.saveProgramConfig()
+                Log.d(TAG, "texture resource update finished: $releaseVersion changed=$changed")
+            })
+    }
+
+    fun onClickTextureDownload(isHumanClick: Boolean = true) {
+        context?.mainPageTextureAssetsViewDataUpdate(
+            downloadAbleState = false,
+            errorString = "",
+            downloadProgressState = -1f
+        )
+        TextureResourceUpdater.checkUpdateTextureAssets(context!!,
+            programConfig.value.useAPITextureAssetsURL,
+            onFailed = { _, reason ->
+                context.mainPageTextureAssetsViewDataUpdate(
+                    downloadAbleState = true,
+                    errorString = reason,
+                    downloadProgressState = -1f
+                )
+                if (isHumanClick) {
+                    context.mainUIConfirmStatUpdate(true, "Error", reason)
+                }
+            },
+            onResult = { data, localVersion ->
+                if (!isHumanClick) {
+                    if (data.tag_name == localVersion) {
+                        context.mainPageTextureAssetsViewDataUpdate(
+                            downloadAbleState = true,
+                            errorString = "",
+                            downloadProgressState = -1f,
+                            localTextureResourceVersion = localVersion
+                        )
+                        return@checkUpdateTextureAssets
+                    }
+                }
+
+                context.mainUIConfirmStatUpdate(true, context.getString(R.string.texture_resource_update),
+                    "${data.name}\n$localVersion -> ${data.tag_name}\n${data.body}\n\n${TimeUtils.convertIsoToLocalTime(data.published_at)}",
+                    onConfirm = {
+                        resourceSettingsViewModel.expanded = true
+                        startTextureResourceUpdate()
+                    },
+                    onCancel = {
+                        context.mainPageTextureAssetsViewDataUpdate(
+                            downloadAbleState = true,
+                            errorString = "",
+                            downloadProgressState = -1f
+                        )
+                    }
+                )
+            })
     }
 
     LaunchedEffect(Unit) {
@@ -366,9 +463,25 @@ fun HomePage(modifier: Modifier = Modifier,
             context.mainPageAssetsViewDataUpdate(
                 localAPIResourceVersion = localAPIResVer
             )
+            context.mainPageTextureAssetsViewDataUpdate(
+                localTextureResourceVersion = TextureResourceUpdater.getLocalVersion(context)
+            )
             if (isFirstTimeInThisPage) {
-                if (programConfig.value.useAPIAssets && programConfig.value.useAPIAssetsURL.isNotEmpty()) {
-                    onClickDownload(false, false)
+                val shouldCheckResource =
+                    programConfig.value.useAPIAssets && programConfig.value.useAPIAssetsURL.isNotEmpty()
+                val shouldCheckTexture = config.value.replaceTexture &&
+                    programConfig.value.useAPITextureAssets &&
+                    programConfig.value.useAPITextureAssetsURL.isNotEmpty()
+
+                if (shouldCheckResource) {
+                    onClickDownload(false, false) {
+                        if (shouldCheckTexture) {
+                            onClickTextureDownload(false)
+                        }
+                    }
+                }
+                else if (shouldCheckTexture) {
+                    onClickTextureDownload(false)
                 }
                 checkOnlineUpdates(true)
             }
@@ -399,6 +512,10 @@ fun HomePage(modifier: Modifier = Modifier,
 
                     GakuSwitch(modifier, stringResource(R.string.replace_font), checked = config.value.replaceFont) {
                             v -> context?.onReplaceFontChanged(v)
+                    }
+
+                    GakuSwitch(modifier, stringResource(R.string.replace_texture), checked = config.value.replaceTexture) {
+                            v -> context?.onReplaceTextureChanged(v)
                     }
 
                 }
@@ -680,6 +797,104 @@ fun HomePage(modifier: Modifier = Modifier,
 
                                 }
 
+                            }
+                        }
+
+                        if (config.value.replaceTexture) {
+                            item {
+                                HorizontalDivider(
+                                    thickness = 1.dp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                )
+                            }
+
+                            item {
+                                GakuSwitch(modifier = modifier.padding(start = 8.dp, end = 8.dp),
+                                    checked = programConfig.value.useAPITextureAssets,
+                                    text = stringResource(R.string.check_texture_resource_from_api)
+                                ) { v -> context?.onPUseAPITextureAssetsChanged(v) }
+
+                                CollapsibleBox(modifier = modifier.graphicsLayer(clip = false),
+                                    expandState = programConfig.value.useAPITextureAssets,
+                                    collapsedHeight = 0.dp,
+                                    innerPaddingLeftRight = 8.dp,
+                                    showExpand = false
+                                ) {
+                                    GakuSwitch(modifier = modifier,
+                                        checked = programConfig.value.delTextureRemoteAfterUpdate,
+                                        text = stringResource(id = R.string.del_remote_after_update)
+                                    ) { v -> context?.onPDelTextureRemoteAfterUpdateChanged(v) }
+
+                                    LazyColumn(modifier = modifier
+                                        .sizeIn(maxHeight = screenH),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        item {
+                                            Row(modifier = modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                                verticalAlignment = Alignment.CenterVertically) {
+
+                                                GakuTextInput(modifier = modifier
+                                                    .height(45.dp)
+                                                    .padding(end = 8.dp)
+                                                    .fillMaxWidth()
+                                                    .weight(1f),
+                                                    fontSize = 14f,
+                                                    value = programConfig.value.useAPITextureAssetsURL,
+                                                    onValueChange = { c -> context?.onPUseAPITextureAssetsURLChanged(c, 0, 0, 0)},
+                                                    label = { Text(stringResource(R.string.texture_api_addr)) }
+                                                )
+
+                                                if (textureDownloadAble) {
+                                                    GakuButton(modifier = modifier
+                                                        .height(40.dp)
+                                                        .sizeIn(minWidth = 80.dp),
+                                                        text = stringResource(R.string.check_update),
+                                                        onClick = { onClickTextureDownload(true) })
+                                                }
+                                                else {
+                                                    GakuButton(modifier = modifier
+                                                        .height(40.dp)
+                                                        .sizeIn(minWidth = 80.dp),
+                                                        text = stringResource(id = R.string.cancel), onClick = {
+                                                            FileDownloader.cancel()
+                                                        })
+                                                }
+
+                                            }
+                                        }
+
+                                        if (textureDownloadProgress >= 0) {
+                                            item {
+                                                GakuProgressBar(progress = textureDownloadProgress,
+                                                    isError = textureDownloadErrorString.isNotEmpty())
+                                            }
+                                        }
+
+                                        if (textureDownloadErrorString.isNotEmpty()) {
+                                            item {
+                                                Text(text = textureDownloadErrorString, color = Color(0xFFE2041B))
+                                            }
+                                        }
+
+                                        item {
+                                            Text(modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    context?.let {
+                                                        it.mainPageTextureAssetsViewDataUpdate(
+                                                            localTextureResourceVersion = TextureResourceUpdater
+                                                                .getLocalVersion(it)
+                                                        )
+                                                    }
+                                                }, text = "${stringResource(R.string.downloaded_texture_resource_version)}: $localTextureResourceVersion")
+                                        }
+
+                                        item {
+                                            Spacer(Modifier.height(0.dp))
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

@@ -18,3 +18,5 @@ local.properties
 /.kotlin
 /app/debug
 /app/release
+
+app/src/main/assets/gakumas-local

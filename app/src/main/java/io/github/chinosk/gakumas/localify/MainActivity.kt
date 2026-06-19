@@ -18,6 +18,7 @@ import io.github.chinosk.gakumas.localify.hookUtils.FilesChecker
 import io.github.chinosk.gakumas.localify.hookUtils.MainKeyEventDispatcher
 import io.github.chinosk.gakumas.localify.mainUtils.RemoteAPIFilesChecker
 import io.github.chinosk.gakumas.localify.mainUtils.ShizukuApi
+import io.github.chinosk.gakumas.localify.mainUtils.TextureResourceUpdater
 import io.github.chinosk.gakumas.localify.mainUtils.json
 import io.github.chinosk.gakumas.localify.models.ConfirmStateModel
 import io.github.chinosk.gakumas.localify.models.GakumasConfig
@@ -79,6 +80,7 @@ class MainActivity : ComponentActivity(), ConfigUpdateListener, IConfigurableAct
     fun getVersion(): List<String> {
         var versionText = ""
         var resVersionText = "unknown"
+        var textureVersionText = "unknown"
 
         try {
             val stream = assets.open("${FilesChecker.localizationFilesDir}/version.txt")
@@ -87,6 +89,7 @@ class MainActivity : ComponentActivity(), ConfigUpdateListener, IConfigurableAct
             if (programConfig.useAPIAssets) {
                 RemoteAPIFilesChecker.getLocalVersion(this)?.let { resVersionText = it }
             }
+            TextureResourceUpdater.getLocalVersion(this)?.let { textureVersionText = it }
 
             val packInfo = packageManager.getPackageInfo(packageName, 0)
             val version = packInfo.versionName
@@ -95,7 +98,7 @@ class MainActivity : ComponentActivity(), ConfigUpdateListener, IConfigurableAct
         }
         catch (_: Exception) {}
 
-        return listOf(versionText, resVersionText)
+        return listOf(versionText, resVersionText, textureVersionText)
     }
 
     fun openUrl(url: String) {
@@ -130,7 +133,8 @@ class MainActivity : ComponentActivity(), ConfigUpdateListener, IConfigurableAct
         viewModel = ViewModelProvider(this, factory)[UserConfigViewModel::class.java]
 
         programConfigFactory = ProgramConfigViewModelFactory(programConfig,
-            FileHotUpdater.getZipResourceVersion(File(filesDir, "update_trans.zip").absolutePath).toString()
+            FileHotUpdater.getZipResourceVersion(File(filesDir, "update_trans.zip").absolutePath).toString(),
+            TextureResourceUpdater.getLocalVersion(this).toString()
         )
         programConfigViewModel = ViewModelProvider(this, programConfigFactory)[ProgramConfigViewModel::class.java]
 
@@ -215,6 +219,50 @@ fun getProgramLocalAPIResourceVersionState(context: MainActivity?): State<String
 fun getProgramDownloadErrorStringState(context: MainActivity?): State<String> {
     return if (context != null) {
         context.programConfigViewModel.errorString.collectAsState()
+    }
+    else {
+        val configMSF = MutableStateFlow("")
+        configMSF.asStateFlow().collectAsState()
+    }
+}
+
+@Composable
+fun getProgramTextureDownloadState(context: MainActivity?): State<Float> {
+    return if (context != null) {
+        context.programConfigViewModel.textureDownloadProgress.collectAsState()
+    }
+    else {
+        val configMSF = MutableStateFlow(0f)
+        configMSF.asStateFlow().collectAsState()
+    }
+}
+
+@Composable
+fun getProgramTextureDownloadAbleState(context: MainActivity?): State<Boolean> {
+    return if (context != null) {
+        context.programConfigViewModel.textureDownloadAble.collectAsState()
+    }
+    else {
+        val configMSF = MutableStateFlow(true)
+        configMSF.asStateFlow().collectAsState()
+    }
+}
+
+@Composable
+fun getProgramLocalTextureResourceVersionState(context: MainActivity?): State<String> {
+    return if (context != null) {
+        context.programConfigViewModel.localTextureResourceVersion.collectAsState()
+    }
+    else {
+        val configMSF = MutableStateFlow("null")
+        configMSF.asStateFlow().collectAsState()
+    }
+}
+
+@Composable
+fun getProgramTextureDownloadErrorStringState(context: MainActivity?): State<String> {
+    return if (context != null) {
+        context.programConfigViewModel.textureErrorString.collectAsState()
     }
     else {
         val configMSF = MutableStateFlow("")

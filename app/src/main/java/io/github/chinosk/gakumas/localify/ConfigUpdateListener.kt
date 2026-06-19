@@ -21,6 +21,7 @@ interface ConfigListener {
     fun onTextTestChanged(value: Boolean)
     fun onUseMasterTransChanged(value: Boolean)
     fun onReplaceFontChanged(value: Boolean)
+    fun onReplaceTextureChanged(value: Boolean)
     fun onLazyInitChanged(value: Boolean)
     fun onEnableFreeCameraChanged(value: Boolean)
     fun onTargetFpsChanged(s: CharSequence, start: Int, before: Int, count: Int)
@@ -39,6 +40,7 @@ interface ConfigListener {
     fun onLodQualityLevelChanged(s: CharSequence, start: Int, before: Int, count: Int)
     fun onGameOrientationChanged(checkedId: Int)
     fun onDumpTextChanged(value: Boolean)
+    fun onDumpRuntimeTextureChanged(value: Boolean)
 
     fun onEnableBreastParamChanged(value: Boolean)
     fun onBDampingChanged(s: CharSequence, start: Int, before: Int, count: Int)
@@ -69,8 +71,15 @@ interface ConfigListener {
                                      localResourceVersionState: String? = null,
                                      errorString: String? = null,
                                      localAPIResourceVersion: String? = null)
+    fun mainPageTextureAssetsViewDataUpdate(downloadAbleState: Boolean? = null,
+                                            downloadProgressState: Float? = null,
+                                            localTextureResourceVersion: String? = null,
+                                            errorString: String? = null)
     fun onPUseAPIAssetsChanged(value: Boolean)
     fun onPUseAPIAssetsURLChanged(s: CharSequence, start: Int, before: Int, count: Int)
+    fun onPUseAPITextureAssetsChanged(value: Boolean)
+    fun onPUseAPITextureAssetsURLChanged(s: CharSequence, start: Int, before: Int, count: Int)
+    fun onPDelTextureRemoteAfterUpdateChanged(value: Boolean)
     fun mainUIConfirmStatUpdate(isShow: Boolean? = null, title: String? = null,
                                 content: String? = null,
                                 onConfirm: (() -> Unit)? = { mainUIConfirmStatUpdate(isShow = false) },
@@ -129,6 +138,12 @@ interface ConfigUpdateListener: ConfigListener, IHasConfigItems {
         pushKeyEvent(KeyEvent(1145, 30))
     }
 
+    override fun onReplaceTextureChanged(value: Boolean) {
+        config.replaceTexture = value
+        saveConfig()
+        pushKeyEvent(KeyEvent(1145, 30))
+    }
+
     override fun onLazyInitChanged(value: Boolean) {
         config.lazyInit = value
         saveConfig()
@@ -146,6 +161,11 @@ interface ConfigUpdateListener: ConfigListener, IHasConfigItems {
 
     override fun onDumpTextChanged(value: Boolean) {
         config.dumpText = value
+        saveConfig()
+    }
+
+    override fun onDumpRuntimeTextureChanged(value: Boolean) {
+        config.dumpRuntimeTexture = value
         saveConfig()
     }
 
@@ -576,6 +596,14 @@ interface ConfigUpdateListener: ConfigListener, IHasConfigItems {
         localAPIResourceVersion?.let{ programConfigViewModel.localAPIResourceVersionState.value = it }
     }
 
+    override fun mainPageTextureAssetsViewDataUpdate(downloadAbleState: Boolean?, downloadProgressState: Float?,
+                                                     localTextureResourceVersion: String?, errorString: String?) {
+        downloadAbleState?.let { programConfigViewModel.textureDownloadAbleState.value = it }
+        downloadProgressState?.let{ programConfigViewModel.textureDownloadProgressState.value = it }
+        localTextureResourceVersion?.let{ programConfigViewModel.localTextureResourceVersionState.value = it }
+        errorString?.let{ programConfigViewModel.textureErrorStringState.value = it }
+    }
+
     override fun onPUseAPIAssetsChanged(value: Boolean) {
         programConfig.useAPIAssets = value
         if (value) {
@@ -588,6 +616,21 @@ interface ConfigUpdateListener: ConfigListener, IHasConfigItems {
 
     override fun onPUseAPIAssetsURLChanged(s: CharSequence, start: Int, before: Int, count: Int) {
         programConfig.useAPIAssetsURL = s.toString()
+        saveProgramConfig()
+    }
+
+    override fun onPUseAPITextureAssetsChanged(value: Boolean) {
+        programConfig.useAPITextureAssets = value
+        saveProgramConfig()
+    }
+
+    override fun onPUseAPITextureAssetsURLChanged(s: CharSequence, start: Int, before: Int, count: Int) {
+        programConfig.useAPITextureAssetsURL = s.toString()
+        saveProgramConfig()
+    }
+
+    override fun onPDelTextureRemoteAfterUpdateChanged(value: Boolean) {
+        programConfig.delTextureRemoteAfterUpdate = value
         saveProgramConfig()
     }
 

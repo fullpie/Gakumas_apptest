@@ -35,6 +35,7 @@ import java.util.Locale
 import kotlin.system.measureTimeMillis
 import io.github.chinosk.gakumas.localify.hookUtils.FileHotUpdater
 import io.github.chinosk.gakumas.localify.hookUtils.FilesChecker.localizationFilesDir
+import io.github.chinosk.gakumas.localify.mainUtils.TextureResourceUpdater
 import io.github.chinosk.gakumas.localify.mainUtils.json
 import io.github.chinosk.gakumas.localify.models.NativeInitProgress
 import io.github.chinosk.gakumas.localify.models.ProgramConfig
@@ -53,6 +54,7 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     private var getConfigError: Exception? = null
     private var externalFilesChecked: Boolean = false
+    private var textureFilesChecked: Boolean = false
     private var gameActivity: Activity? = null
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
@@ -308,6 +310,25 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
                         // 使用 API 资源，不检查内置，API 资源无效，且游戏内没有插件数据时，释放内置数据
                         FilesChecker.initAndCheck(activity.filesDir, modulePath)
                     }
+                }
+            }
+
+            if (initConfig?.replaceTexture == true && !textureFilesChecked) {
+                val textureDataUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra("texture_resource_file", Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<Uri>("texture_resource_file")
+                }
+
+                if (textureDataUri != null) {
+                    Log.i(TAG, "Texture resource uri received: $textureDataUri")
+                    textureFilesChecked = true
+                    TextureResourceUpdater.updateTextureFilesFromZip(activity, textureDataUri,
+                        activity.filesDir, programConfig?.delTextureRemoteAfterUpdate ?: true)
+                }
+                else {
+                    Log.i(TAG, "Texture resource uri missing.")
                 }
             }
 

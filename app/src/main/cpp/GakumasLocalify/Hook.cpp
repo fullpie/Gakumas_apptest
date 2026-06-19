@@ -1,4 +1,5 @@
 #include "Hook.h"
+#include "HookTexture.h"
 #include "Plugin.h"
 #include "Log.h"
 #include "../deps/UnityResolve/UnityResolve.hpp"
@@ -13,6 +14,11 @@
 #include <thread>
 #include <map>
 #include <set>
+#include <list>
+#include <vector>
+#include <string_view>
+#include <utility>
+#include <cctype>
 #include "../platformDefine.hpp"
 
 #ifdef GKMS_WINDOWS
@@ -46,6 +52,7 @@ void UnHookAll() {
 
 namespace GakumasLocal::HookMain {
     using Il2cppString = UnityResolve::UnityType::String;
+    using Il2CppGCHandle = void*;
 
     UnityResolve::UnityType::String* environment_get_stacktrace() {
         /*
@@ -65,23 +72,46 @@ namespace GakumasLocal::HookMain {
         return toString_mtd->Invoke<Il2cppString*>(klassInstance);
     }
 
-    DEFINE_HOOK(void, Internal_LogException, (void* ex, void* obj)) {
-        Internal_LogException_Orig(ex, obj);
+    // Unity 6: DebugLogHandler.Internal_Log* is resolved as a managed method
+    // through GetMethod(), so the generated IL2CPP function includes the
+    // trailing MethodInfo* argument.
+    DEFINE_HOOK(void, Internal_LogException, (void* ex, void* obj, void* mtd)) {
+        Internal_LogException_Orig(ex, obj, mtd);
         static auto Exception_ToString = Il2cppUtils::GetMethod("mscorlib.dll", "System", "Exception", "ToString");
         Log::LogUnityLog(ANDROID_LOG_ERROR, "UnityLog - Internal_LogException:\n%s", Exception_ToString->Invoke<Il2cppString*>(ex)->ToString().c_str());
     }
 
-    DEFINE_HOOK(void, Internal_Log, (int logType, int logOption, UnityResolve::UnityType::String* content, void* context)) {
-        Internal_Log_Orig(logType, logOption, content, context);
-        // 2022.3.21f1
+    DEFINE_HOOK(void, Internal_Log, (int logType, int logOption, UnityResolve::UnityType::String* content, void* context, void* mtd)) {
+        Internal_Log_Orig(logType, logOption, content, context, mtd);
         Log::LogUnityLog(ANDROID_LOG_VERBOSE, "Internal_Log:\n%s", content->ToString().c_str());
     }
 
     bool IsNativeObjectAlive(void* obj) {
-        static UnityResolve::Method* IsNativeObjectAliveMtd = nullptr;
-        if (!IsNativeObjectAliveMtd) IsNativeObjectAliveMtd = Il2cppUtils::GetMethod("UnityEngine.CoreModule.dll", "UnityEngine",
-                                                                                     "Object", "IsNativeObjectAlive");
-        return IsNativeObjectAliveMtd->Invoke<bool>(obj);
+        if (!obj) {
+            return false;
+        }
+
+        static const auto IsNativeObjectAliveMtd = Il2cppUtils::GetMethod(
+            "UnityEngine.CoreModule.dll",
+            "UnityEngine",
+            "Object",
+            "IsNativeObjectAlive",
+            { "UnityEngine.Object" }
+        );
+
+        if (!IsNativeObjectAliveMtd || !IsNativeObjectAliveMtd->function) {
+            return false;
+        }
+
+        using IsNativeObjectAliveFn = bool (*)(void* obj, void* method);
+        const auto isNativeObjectAlive = reinterpret_cast<IsNativeObjectAliveFn>(
+            IsNativeObjectAliveMtd->function
+        );
+
+        return isNativeObjectAlive(
+            obj,
+            IsNativeObjectAliveMtd->address
+        );
     }
 
     UnityResolve::UnityType::Camera* mainCameraCache = nullptr;
@@ -262,10 +292,21 @@ namespace GakumasLocal::HookMain {
 
     std::unordered_map<void*, std::string> loadHistory{};
 
+
+    DEFINE_HOOK(void*, AssetBundle_LoadAsset, (void* self, Il2cppString* name, void* type)) {
+        auto result = AssetBundle_LoadAsset_Orig(self, name, type);
+        if (name) {
+            result = ReplaceTextureOrSpriteAsset(result, name->ToString());
+        }
+        return result;
+    }
+
     DEFINE_HOOK(void*, AssetBundle_LoadAssetAsync, (void* self, Il2cppString* name, void* type)) {
         // Log::InfoFmt("AssetBundle_LoadAssetAsync: %s, type: %s", name->ToString().c_str());
         auto ret = AssetBundle_LoadAssetAsync_Orig(self, name, type);
-        loadHistory.emplace(ret, name->ToString());
+        if (ret && name) {
+            loadHistory.emplace(ret, name->ToString());
+        }
         return ret;
     }
 
@@ -277,7 +318,28 @@ namespace GakumasLocal::HookMain {
 
             // const auto assetClass = Il2cppUtils::get_class_from_instance(result);
             // Log::InfoFmt("AssetBundleRequest_GetResult: %s, type: %s", name.c_str(), static_cast<Il2CppClassHead*>(assetClass)->name);
+            result = ReplaceTextureOrSpriteAsset(result, name);
         }
+        return result;
+    }
+
+    DEFINE_HOOK(void*, AssetBundleRequest_get_asset, (void* self)) {
+        std::string name;
+        if (const auto iter = loadHistory.find(self); iter != loadHistory.end()) {
+            name = iter->second;
+            loadHistory.erase(iter);
+        }
+
+        auto result = AssetBundleRequest_get_asset_Orig(self);
+        if (!name.empty()) {
+            result = ReplaceTextureOrSpriteAsset(result, name);
+        }
+        return result;
+    }
+
+    DEFINE_HOOK(void*, AssetBundleRequest_get_allAssets, (void* self)) {
+        auto result = AssetBundleRequest_get_allAssets_Orig(self);
+        ReplaceAllAssetTextures(result);
         return result;
     }
 
@@ -285,8 +347,34 @@ namespace GakumasLocal::HookMain {
         auto ret = Resources_Load_Orig(path, systemTypeInstance);
 
         // if (ret) Log::DebugFmt("Resources_Load: %s, type: %s", path->ToString().c_str(), Il2cppUtils::get_class_from_instance(ret)->name);
+        if (path) {
+            ret = ReplaceTextureOrSpriteAsset(ret, path->ToString());
+        }
 
         return ret;
+    }
+
+    DEFINE_HOOK(void*, Sprite_get_texture, (void* self)) {
+        return ReplaceSpriteTexture(Sprite_get_texture_Orig(self));
+    }
+
+    DEFINE_HOOK(void, Image_set_sprite, (void* self, void* sprite)) {
+        Image_set_sprite_Orig(self, ReplaceSpriteAssetByTextureName(sprite));
+    }
+
+    DEFINE_HOOK(void, Image_set_overrideSprite, (void* self, void* sprite)) {
+        Image_set_overrideSprite_Orig(self, ReplaceSpriteAssetByTextureName(sprite));
+    }
+
+    DEFINE_HOOK(void, CanvasRenderer_SetTexture, (void* self, void* texture)) {
+        CanvasRenderer_SetTexture_Orig(
+            self,
+            ReplaceTextureOrSpriteByObjectName(texture)
+        );
+    }
+
+    DEFINE_HOOK(void, SpriteRenderer_set_sprite, (void* self, void* sprite)) {
+        SpriteRenderer_set_sprite_Orig(self, ReplaceSpriteAssetByTextureName(sprite));
     }
 
     DEFINE_HOOK(void, I18nHelper_SetUpI18n, (void* self, Il2cppString* lang, Il2cppString* localizationText, int keyComparison)) {
@@ -311,7 +399,6 @@ namespace GakumasLocal::HookMain {
         }
     }
 
-    
 #ifdef GKMS_WINDOWS
     struct TransparentStringHash : std::hash<std::wstring>, std::hash<std::wstring_view>
     {
@@ -320,7 +407,7 @@ namespace GakumasLocal::HookMain {
 
     typedef std::unordered_set<std::wstring, TransparentStringHash, std::equal_to<void>> AssetPathsType;
     std::map<std::string, AssetPathsType> CustomAssetBundleAssetPaths;
-    std::unordered_map<std::string, uint32_t> CustomAssetBundleHandleMap{};
+    std::unordered_map<std::string, Il2CppGCHandle> CustomAssetBundleHandleMap{};
     std::list<std::string> g_extra_assetbundle_paths{};
 
     void LoadExtraAssetBundle() {
@@ -333,9 +420,12 @@ namespace GakumasLocal::HookMain {
         // CustomAssetBundleAssetPaths.clear();
         // assert(!ExtraAssetBundleHandle && ExtraAssetBundleAssetPaths.empty());
 
-        static auto AssetBundle_GetAllAssetNames = reinterpret_cast<void* (*)(void*)>(
-            Il2cppUtils::il2cpp_resolve_icall("UnityEngine.AssetBundle::GetAllAssetNames()")
-            );
+        static auto AssetBundle_GetAllAssetNames = Il2cppUtils::GetMethod(
+            "UnityEngine.AssetBundleModule.dll",
+            "UnityEngine",
+            "AssetBundle",
+            "GetAllAssetNames"
+        );
 
         for (const auto& i : g_extra_assetbundle_paths) {
             if (CustomAssetBundleHandleMap.contains(i)) continue;
@@ -343,7 +433,7 @@ namespace GakumasLocal::HookMain {
             const auto extraAssetBundle = WinHooks::LoadAssetBundle(i);
             if (extraAssetBundle)
             {
-                const auto allAssetPaths = AssetBundle_GetAllAssetNames(extraAssetBundle);
+                const auto allAssetPaths = AssetBundle_GetAllAssetNames->Invoke<void*>(extraAssetBundle);
                 AssetPathsType assetPath{};
                 Il2cppUtils::iterate_IEnumerable<Il2CppString*>(allAssetPaths, [&assetPath](Il2CppString* path)
                     {
@@ -352,7 +442,8 @@ namespace GakumasLocal::HookMain {
                         assetPath.emplace(path->start_char);
                     });
                 CustomAssetBundleAssetPaths.emplace(i, assetPath);
-                CustomAssetBundleHandleMap.emplace(i, UnityResolve::Invoke<uint32_t>("il2cpp_gchandle_new", extraAssetBundle, false));
+                const auto bundleHandle = UnityResolve::Invoke<Il2CppGCHandle>("il2cpp_gchandle_new", extraAssetBundle, false);
+                CustomAssetBundleHandleMap.emplace(i, bundleHandle);
             }
             else
             {
@@ -361,7 +452,7 @@ namespace GakumasLocal::HookMain {
         }
     }
 
-    uint32_t GetBundleHandleByAssetName(std::wstring assetName) {
+    Il2CppGCHandle GetBundleHandleByAssetName(std::wstring assetName) {
         for (const auto& i : CustomAssetBundleAssetPaths) {
             for (const auto& m : i.second) {
                 if (std::equal(m.begin(), m.end(), assetName.begin(), assetName.end(),
@@ -372,14 +463,14 @@ namespace GakumasLocal::HookMain {
                 }
             }
         }
-        return NULL;
+        return nullptr;
     }
 
-    uint32_t GetBundleHandleByAssetName(std::string assetName) {
+    Il2CppGCHandle GetBundleHandleByAssetName(std::string assetName) {
         return GetBundleHandleByAssetName(utility::conversions::to_string_t(assetName));
     }
 
-    uint32_t ReplaceFontHandle;
+    Il2CppGCHandle ReplaceFontHandle = nullptr;
 
     void* GetReplaceFont() {
         static auto FontClass = Il2cppUtils::GetClass("UnityEngine.TextRenderingModule.dll", "UnityEngine", "Font");
@@ -390,7 +481,7 @@ namespace GakumasLocal::HookMain {
         const auto fontPath = "assets/fonts/gkamszhfontmix.otf";
 
         void* replaceFont{};
-        const auto& bundleHandle = GetBundleHandleByAssetName(fontPath);
+        const auto bundleHandle = GetBundleHandleByAssetName(fontPath);
         if (bundleHandle)
         {
             if (ReplaceFontHandle)
@@ -405,19 +496,23 @@ namespace GakumasLocal::HookMain {
                 }
                 else
                 {
-                    UnityResolve::Invoke<void>("il2cpp_gchandle_free", std::exchange(ReplaceFontHandle, 0));
+                    UnityResolve::Invoke<void>("il2cpp_gchandle_free", std::exchange(ReplaceFontHandle, nullptr));
                 }
             }
 
             const auto extraAssetBundle = UnityResolve::Invoke<void*>("il2cpp_gchandle_get_target", bundleHandle);
-			static auto AssetBundle_LoadAsset = reinterpret_cast<void* (*)(void* _this, Il2CppString* name, Il2cppUtils::Il2CppReflectionType* type)>(
-                Il2cppUtils::il2cpp_resolve_icall("UnityEngine.AssetBundle::LoadAsset_Internal(System.String,System.Type)")
-				);;
+            static auto AssetBundle_LoadAsset = Il2cppUtils::GetMethod(
+                "UnityEngine.AssetBundleModule.dll",
+                "UnityEngine",
+                "AssetBundle",
+                "LoadAsset_Internal",
+                { "System.String", "System.Type" }
+            );
 
-            replaceFont = AssetBundle_LoadAsset(extraAssetBundle, Il2cppString::New(fontPath), Font_Type);
+            replaceFont = AssetBundle_LoadAsset->Invoke<void*>(extraAssetBundle, Il2cppString::New(fontPath), Font_Type);
             if (replaceFont)
             {
-                ReplaceFontHandle = UnityResolve::Invoke<uint32_t>("il2cpp_gchandle_new", replaceFont, false);
+                ReplaceFontHandle = UnityResolve::Invoke<Il2CppGCHandle>("il2cpp_gchandle_new", replaceFont, false);
             }
             else
             {
@@ -432,19 +527,72 @@ namespace GakumasLocal::HookMain {
     }
 #else
     void* fontCache = nullptr;
+    bool CreateFontFromPath(void* font, const std::filesystem::path& fontName) {
+        if (!font) {
+            return false;
+        }
+
+        const auto fontPath = Il2cppString::New(fontName.string());
+        if (!fontPath) {
+            Log::Error("CreateFontFromPath failed: cannot create path string");
+            return false;
+        }
+
+        static auto CreateFontFromPathIcall = reinterpret_cast<void (*)(void* self, Il2cppString* path)>(
+                Il2cppUtils::il2cpp_resolve_icall("UnityEngine.Font::Internal_CreateFontFromPath(UnityEngine.Font,System.String)")
+        );
+        if (CreateFontFromPathIcall) {
+            CreateFontFromPathIcall(font, fontPath);
+            return true;
+        }
+
+        static auto CreateFontFromPathMethod = [] {
+            auto method = Il2cppUtils::GetMethod(
+                    "UnityEngine.TextRenderingModule.dll",
+                    "UnityEngine",
+                    "Font",
+                    "Internal_CreateFontFromPath",
+                    { "UnityEngine.Font", "System.String" }
+            );
+            if (method) {
+                return method;
+            }
+
+            return Il2cppUtils::GetMethod(
+                    "UnityEngine.TextRenderingModule.dll",
+                    "UnityEngine",
+                    "Font",
+                    "Internal_CreateFontFromPath"
+            );
+        }();
+        if (!CreateFontFromPathMethod || !CreateFontFromPathMethod->function || !CreateFontFromPathMethod->address) {
+            Log::Error("CreateFontFromPath failed: method not found");
+            return false;
+        }
+
+        using CreateFontFromPathManagedFn = void (*)(void* font, Il2cppString* path, void* method);
+        const auto createFontFromPath = reinterpret_cast<CreateFontFromPathManagedFn>(
+                CreateFontFromPathMethod->function
+        );
+        createFontFromPath(font, fontPath, CreateFontFromPathMethod->address);
+        return true;
+    }
+
     void* GetReplaceFont() {
         static auto fontName = Local::GetBasePath() / "local-files" / "gkamsZHFontMIX.otf";
         if (!std::filesystem::exists(fontName)) {
             return nullptr;
         }
 
-        static auto CreateFontFromPath = reinterpret_cast<void (*)(void* self, Il2cppString* path)>(
-                Il2cppUtils::il2cpp_resolve_icall("UnityEngine.Font::Internal_CreateFontFromPath(UnityEngine.Font,System.String)")
-        );
         static auto Font_klass = Il2cppUtils::GetClass("UnityEngine.TextRenderingModule.dll",
                                                        "UnityEngine", "Font");
         static auto Font_ctor = Il2cppUtils::GetMethod("UnityEngine.TextRenderingModule.dll",
                                                        "UnityEngine", "Font", ".ctor");
+        if (!Font_klass || !Font_ctor) {
+            Log::Error("GetReplaceFont failed: Font class or constructor not found");
+            return nullptr;
+        }
+
         if (fontCache) {
             if (IsNativeObjectAlive(fontCache)) {
                 return fontCache;
@@ -452,9 +600,16 @@ namespace GakumasLocal::HookMain {
         }
 
         const auto newFont = Font_klass->New<void*>();
+        if (!newFont) {
+            Log::Error("GetReplaceFont failed: cannot create Font instance");
+            return nullptr;
+        }
         Font_ctor->Invoke<void>(newFont);
 
-        CreateFontFromPath(newFont, Il2cppString::New(fontName.string()));
+        if (!CreateFontFromPath(newFont, fontName)) {
+            return nullptr;
+        }
+
         fontCache = newFont;
         return newFont;
     }
@@ -820,7 +975,7 @@ namespace GakumasLocal::HookMain {
     DEFINE_HOOK(bool, UserIdolCardSkinCollection_Exists, (void* self, Il2cppString* id, void* mtd)) { // Live默认选择
         auto ret = UserIdolCardSkinCollection_Exists_Orig(self, id, mtd);
         // Log::DebugFmt("UserIdolCardSkinCollection_Exists: %s, ret: %d", id->ToString().c_str(), ret);
-        if (!Config::unlockAllLive) return ret;
+        if (!(Config::dbgMode && Config::unlockAllLive)) return ret;
 
         if (id) {
             std::string idStr = id->ToString();
@@ -831,7 +986,39 @@ namespace GakumasLocal::HookMain {
         return ret;
     }
 
+    void* GetMethodPointerByArgCount(const std::string& assemblyName, const std::string& nameSpaceName,
+                                     const std::string& className, const std::string& methodName,
+                                     size_t argsCount) {
+        auto klass = Il2cppUtils::GetClass(assemblyName, nameSpaceName, className);
+        if (!klass) return nullptr;
+
+        for (auto method : klass->methods) {
+            if (method && method->name == methodName && method->args.size() == argsCount) {
+                return method->function;
+            }
+        }
+
+        Log::ErrorFmt("GetMethodPointerByArgCount error: method %s::%s.%s with %zu args not found.",
+                      nameSpaceName.c_str(), className.c_str(), methodName.c_str(), argsCount);
+        return nullptr;
+    }
+
 #ifdef GKMS_WINDOWS
+    DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetReleaseDataAsync, (void* retstr, void* self, void* liveData, Il2cppString* characterId, bool isUnlocked, bool isNew, bool hasLiveSkin, void* ct, void* mtd)) {
+        if (Config::dbgMode && Config::unlockAllLive) {
+            isUnlocked = true;
+            hasLiveSkin = true;
+        }
+        PictureBookLiveThumbnailView_SetReleaseDataAsync_Orig(retstr, self, liveData, characterId, isUnlocked, isNew, hasLiveSkin, ct, mtd);
+    }
+
+    DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetUnReleaseDataAsync, (void* retstr, void* self, void* liveData, bool isExemptLive, Il2cppString* characterId, void* ct, void* mtd)) {
+        if (Config::dbgMode && Config::unlockAllLive) {
+            isExemptLive = true;
+        }
+        PictureBookLiveThumbnailView_SetUnReleaseDataAsync_Orig(retstr, self, liveData, isExemptLive, characterId, ct, mtd);
+    }
+
     DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetDataAsync, (void* retstr, void* self, void* liveData, Il2cppString* characterId, bool isReleased, bool isUnlocked, bool isNew, bool hasLiveSkin, void* ct, void* mtd)) {
         // Log::DebugFmt("PictureBookLiveThumbnailView_SetDataAsync: isReleased: %d, isUnlocked: %d, isNew: %d, hasLiveSkin: %d", isReleased, isUnlocked, isNew, hasLiveSkin);
         if (Config::dbgMode && Config::unlockAllLive) {
@@ -842,6 +1029,21 @@ namespace GakumasLocal::HookMain {
         PictureBookLiveThumbnailView_SetDataAsync_Orig(retstr, self, liveData, characterId, isReleased, isUnlocked, isNew, hasLiveSkin, ct, mtd);
     }
 #else
+    DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetReleaseDataAsync, (void* self, void* liveData, Il2cppString* characterId, bool isUnlocked, bool isNew, bool hasLiveSkin, void* ct, void* mtd)) {
+        if (Config::dbgMode && Config::unlockAllLive) {
+            isUnlocked = true;
+            hasLiveSkin = true;
+        }
+        PictureBookLiveThumbnailView_SetReleaseDataAsync_Orig(self, liveData, characterId, isUnlocked, isNew, hasLiveSkin, ct, mtd);
+    }
+
+    DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetUnReleaseDataAsync, (void* self, void* liveData, bool isExemptLive, Il2cppString* characterId, void* ct, void* mtd)) {
+        if (Config::dbgMode && Config::unlockAllLive) {
+            isExemptLive = true;
+        }
+        PictureBookLiveThumbnailView_SetUnReleaseDataAsync_Orig(self, liveData, isExemptLive, characterId, ct, mtd);
+    }
+
     DEFINE_HOOK(void, PictureBookLiveThumbnailView_SetDataAsync, (void* self, void* liveData, Il2cppString* characterId, bool isReleased, bool isUnlocked, bool isNew, bool hasLiveSkin, void* ct, void* mtd)) {
         // Log::DebugFmt("PictureBookLiveThumbnailView_SetDataAsync: isReleased: %d, isUnlocked: %d, isNew: %d, hasLiveSkin: %d", isReleased, isUnlocked, isNew, hasLiveSkin);
         if (Config::dbgMode && Config::unlockAllLive) {
@@ -1008,7 +1210,7 @@ namespace GakumasLocal::HookMain {
         void* ct, void* callOption, void* errorHandlerIl, Il2cppString* requestIdForResponseCache, void* mtd)) {
 
         // Log::DebugFmt("Produce_ViewPictureBookLiveAsync: %s - %s", musicId->ToString().c_str(), characterId->ToString().c_str());
-        if (Config::unlockAllLive) return getCompletedUniTask();
+        if (Config::dbgMode && Config::unlockAllLive) return getCompletedUniTask();
         return Produce_ViewPictureBookLiveAsync_Orig(retstr, musicId, characterId, ct, callOption, errorHandlerIl, requestIdForResponseCache, mtd);
     }
 #else
@@ -1016,7 +1218,7 @@ namespace GakumasLocal::HookMain {
         void* ct, void* callOption, void* errorHandlerIl, void* requestIdForResponseCache, void* mtd, void* wenhao)) {
 
         // Log::DebugFmt("Produce_ViewPictureBookLiveAsync: %s - %s", musicId->ToString().c_str(), characterId->ToString().c_str());
-        if (Config::unlockAllLive) return getCompletedUniTask();
+        if (Config::dbgMode && Config::unlockAllLive) return getCompletedUniTask();
         return Produce_ViewPictureBookLiveAsync_Orig(retstr, musicId, characterId, ct, callOption, errorHandlerIl, requestIdForResponseCache, mtd, wenhao);
     }
 #endif // GKMS_WINDOWS
@@ -1027,66 +1229,11 @@ namespace GakumasLocal::HookMain {
     DEFINE_HOOK(void*, PictureBookWindowPresenter_GetLiveMusics, (void* self, Il2cppString* charaId, void* mtd)) {
         // Log::DebugFmt("GetLiveMusics: %s", charaId->ToString().c_str());
 
-        if (Config::unlockAllLive) {
+        if (Config::dbgMode && Config::unlockAllLive) {
             PictureBookWindowPresenter_instance = self;
-            PictureBookWindowPresenter_charaId = charaId->ToString();
-
-            static auto PictureBookWindowPresenter_klass = Il2cppUtils::GetClass("Assembly-CSharp.dll", "Campus.OutGame",
-                                                                                 "PictureBookWindowPresenter");
-            static auto existsMusicIds_field = PictureBookWindowPresenter_klass->Get<UnityResolve::Field>("_existsMusicIds");
-            // auto existsMusicIds = Il2cppUtils::ClassGetFieldValue<UnityResolve::UnityType::List<Il2cppString*>*>(self, existsMusicIds_field);
-            auto existsMusicIds = Il2cppUtils::ClassGetFieldValue<UnityResolve::UnityType::Dictionary<Il2cppString*, UnityResolve::UnityType::List<Il2cppString*>>*>(self, existsMusicIds_field);
-
-            if (!existsMusicIds) {
-                static auto Dict_List_String_klass = Il2cppUtils::get_system_class_from_reflection_type_str(
-                    "System.Collections.Generic.Dictionary`2[System.String, System.Collections.Generic.List`1[System.String]]");
-                static auto List_String_klass = Il2cppUtils::get_system_class_from_reflection_type_str(
-                    "System.Collections.Generic.List`1[System.String]");
-                static auto List_String_ctor_mtd = Il2cppUtils::il2cpp_class_get_method_from_name(List_String_klass, ".ctor", 0);
-                static auto List_String_ctor = reinterpret_cast<void (*)(void*, void*)>(List_String_ctor_mtd->methodPointer);
-
-                auto fullIds = GetIdolMusicIdAll();
-
-                static auto Dict_List_String_ctor_mtd = Il2cppUtils::il2cpp_class_get_method_from_name(Dict_List_String_klass, ".ctor", 0);
-                static auto Dict_List_String_ctor = reinterpret_cast<void (*)(void*, void*)>(Dict_List_String_ctor_mtd->methodPointer);
-
-                auto newDict = UnityResolve::Invoke<void*>("il2cpp_object_new", Dict_List_String_klass);
-                Dict_List_String_ctor(newDict, Dict_List_String_ctor_mtd);
-                Il2cppUtils::Tools::CSDictEditor<Il2cppString*, void*> newDictEditor(newDict, Dict_List_String_klass);
-
-                // auto fullIds = GetIdolMusicIdAll();
-
-                for (auto& i : fullIds) {
-                    // Log::DebugFmt("GetLiveMusics - Add: %s", i.c_str());  // eg. music-all-amao-001, music-char-hski-001
-                    //newListEditor.Add(Il2cppString::New(i));
-					auto newList = UnityResolve::Invoke<void*>("il2cpp_object_new", List_String_klass);
-                    List_String_ctor(newList, List_String_ctor_mtd);
-					newDictEditor.Add(Il2cppString::New(i), newList);
-                }
-                Il2cppUtils::ClassSetFieldValue(self, existsMusicIds_field, newDict);
-                existsMusicIds = reinterpret_cast<decltype(existsMusicIds)>(newDict);
-                // Log::DebugFmt("GetLiveMusics - set end: %d", fullIds.size());
-            }
-
-            /*
-            Il2cppUtils::Tools::CSDictEditor<Il2cppString*, void*> dicCheckEditor(existsMusicIds, Dict_List_String_klass);
-            for (auto& i : fullIds) {
-				auto currKeyStr = Il2cppString::New(i);
-                void* currList;
-                if (dicCheckEditor.ContainsKey(currKeyStr)) {
-					currList = dicCheckEditor.get_Item(currKeyStr);
-                }
-                else {
-					currList = UnityResolve::Invoke<void*>("il2cpp_object_new", List_String_klass);
-                    List_String_ctor(currList, List_String_ctor_mtd);
-                }
-                Il2cppUtils::Tools::CSListEditor<Il2cppString*> currListEditor(currList);
-                if (!currListEditor.Contains(charaId)) {
-                    currListEditor.Add(charaId);
-                }
-                
-            }*/
-
+            PictureBookWindowPresenter_charaId = charaId ? charaId->ToString() : "";
+            Log::DebugFmt("GetLiveMusics passthrough: self: %p, charaId: %s",
+                          self, PictureBookWindowPresenter_charaId.c_str());
         }
 
         return PictureBookWindowPresenter_GetLiveMusics_Orig(self, charaId, mtd);
@@ -1129,6 +1276,18 @@ namespace GakumasLocal::HookMain {
          */
         // return PictureBookLiveSelectScreenPresenter_MoveLiveScene_Orig(self, produceLive, characterId, idolCardId, costumeId, costumeHeadId, mtd);
         return PictureBookLiveSelectScreenPresenter_MoveLiveScene_Orig(self, produceLive, isPlayCharacterFocusCamera, mtd);
+    }
+
+    DEFINE_HOOK(void, LiveSceneModel_set_IsLyricsActive, (void* self, bool value, void* mtd)) {
+        return LiveSceneModel_set_IsLyricsActive_Orig(self, Config::dbgMode && Config::unlockAllLive ? true : value, mtd);
+    }
+
+    DEFINE_HOOK(void, LiveScenePresenter_SetLyricsActive, (void* self, bool value, void* mtd)) {
+        return LiveScenePresenter_SetLyricsActive_Orig(self, Config::dbgMode && Config::unlockAllLive ? true : value, mtd);
+    }
+
+    DEFINE_HOOK(void, LiveSceneContentView_SetLyricsTextActive, (void* self, bool value, void* mtd)) {
+        return LiveSceneContentView_SetLyricsTextActive_Orig(self, Config::dbgMode && Config::unlockAllLive ? true : value, mtd);
     }
 
     // std::string lastMusicId;
@@ -1696,12 +1855,29 @@ namespace GakumasLocal::HookMain {
             UnityResolve::Mode::Il2Cpp, Config::lazyInit);
 #endif
 
-        ADD_HOOK(AssetBundle_LoadAssetAsync, Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.AssetBundle::LoadAssetAsync_Internal(System.String,System.Type)"));
-        ADD_HOOK(AssetBundleRequest_GetResult, Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.AssetBundleRequest::GetResult()"));
-        ADD_HOOK(Resources_Load, Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.ResourcesAPIInternal::Load(System.String,System.Type)"));
+        // Texture replacement is currently isolated to CanvasRenderer.SetTexture.
+        //
+        // Unity 6 compatibility warning:
+        // The resolver helpers below may return either a native icall address or
+        // a managed IL2CPP methodPointer fallback. These two targets do not share
+        // the same ABI: a managed methodPointer normally has a trailing MethodInfo*
+        // argument, while the current hook declarations use the icall-style
+        // signatures. Do not simply uncomment these ADD_HOOK calls on Unity 6.
+        // Before restoring them, either:
+        //   1. make each resolver return only a verified icall address; or
+        //   2. return ABI metadata and install a separate managed hook signature
+        //      that preserves and forwards the trailing MethodInfo* argument.
+        // ADD_HOOK(AssetBundle_LoadAsset, ResolveAssetBundleLoadAssetHookAddress());
+        // ADD_HOOK(AssetBundle_LoadAssetAsync, ResolveAssetBundleLoadAssetAsyncHookAddress());
+        // ADD_HOOK(AssetBundleRequest_GetResult, ResolveAssetBundleRequestResultHookAddress());
+        // ADD_HOOK(AssetBundleRequest_get_asset, ResolveAssetBundleRequestAssetHookAddress());
+        // ADD_HOOK(AssetBundleRequest_get_allAssets, ResolveAssetBundleRequestAllAssetsHookAddress());
+        // ADD_HOOK(Resources_Load, ResolveResourcesLoadHookAddress());
+        // ADD_HOOK(Sprite_get_texture, ResolveSpriteGetTextureHookAddress());
+        // ADD_HOOK(Image_set_sprite, Il2cppUtils::GetMethodPointer("UnityEngine.UI.dll", "UnityEngine.UI", "Image", "set_sprite"));
+        // ADD_HOOK(Image_set_overrideSprite, Il2cppUtils::GetMethodPointer("UnityEngine.UI.dll", "UnityEngine.UI", "Image", "set_overrideSprite"));
+        ADD_HOOK(CanvasRenderer_SetTexture, Il2cppUtils::GetMethodPointer("UnityEngine.UIModule.dll", "UnityEngine", "CanvasRenderer", "SetTexture", {"UnityEngine.Texture"}));
+        // ADD_HOOK(SpriteRenderer_set_sprite, Il2cppUtils::GetMethodPointer("UnityEngine.CoreModule.dll", "UnityEngine", "SpriteRenderer", "set_sprite"));
 
         ADD_HOOK(I18nHelper_SetUpI18n, Il2cppUtils::GetMethodPointer("quaunity-ui.Runtime.dll", "Qua.UI",
                                                                      "I18nHelper", "SetUpI18n"));
@@ -1833,9 +2009,12 @@ namespace GakumasLocal::HookMain {
         }
 
         // 双端
-        ADD_HOOK(PictureBookLiveThumbnailView_SetDataAsync,
-            Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame.PictureBook",
-                "PictureBookLiveThumbnailView", "SetDataAsync", { "*", "*", "*", "*", "*" }));
+        ADD_HOOK(PictureBookLiveThumbnailView_SetReleaseDataAsync,
+            GetMethodPointerByArgCount("Assembly-CSharp.dll", "Campus.OutGame.PictureBook",
+                "PictureBookLiveThumbnailView", "SetReleaseDataAsync", 6));
+        ADD_HOOK(PictureBookLiveThumbnailView_SetUnReleaseDataAsync,
+            GetMethodPointerByArgCount("Assembly-CSharp.dll", "Campus.OutGame.PictureBook",
+                "PictureBookLiveThumbnailView", "SetUnReleaseDataAsync", 4));
 
         ADD_HOOK(PictureBookWindowPresenter_GetLiveMusics,
                  Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
@@ -1843,22 +2022,35 @@ namespace GakumasLocal::HookMain {
 
 #ifdef GKMS_WINDOWS
         // 跳过切歌Loading，安卓端会崩溃
-        ADD_HOOK(Produce_ViewPictureBookLiveAsync,
-            Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "",
-                "Produce", "ViewPictureBookLiveAsync"));
+        // Disabled after game updates because this async method signature is update-sensitive.
+        // ADD_HOOK(Produce_ViewPictureBookLiveAsync,
+        //     Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "",
+        //         "Produce", "ViewPictureBookLiveAsync"));
 #endif
-        ADD_HOOK(PictureBookLiveSelectScreenModel_ctor,
-                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
-                                               "PictureBookLiveSelectScreenModel", ".ctor"));
+        // ADD_HOOK(PictureBookLiveSelectScreenModel_ctor,
+        //          Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
+        //                                        "PictureBookLiveSelectScreenModel", ".ctor"));
 
-        ADD_HOOK(PictureBookLiveSelectScreenPresenter_MoveLiveScene,
-                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
-                                               "PictureBookLiveSelectScreenPresenter", "MoveLiveScene"));
+        // ADD_HOOK(PictureBookLiveSelectScreenPresenter_MoveLiveScene,
+        //          Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
+        //                                        "PictureBookLiveSelectScreenPresenter", "MoveLiveScene"));
 
         // 双端
-        ADD_HOOK(PictureBookLiveSelectScreenPresenter_OnSelectMusic,
-            Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
-                "PictureBookLiveSelectScreenPresenter", "OnSelectMusicAsync"));
+        ADD_HOOK(LiveSceneModel_set_IsLyricsActive,
+                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.Live",
+                                               "LiveSceneModel", "set_IsLyricsActive"));
+
+        ADD_HOOK(LiveScenePresenter_SetLyricsActive,
+                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.Live",
+                                               "LiveScenePresenter", "SetLyricsActive", { "*" }));
+
+        ADD_HOOK(LiveSceneContentView_SetLyricsTextActive,
+                 Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.Live",
+                                               "LiveSceneContentView", "SetLyricsTextActive", { "*" }));
+
+        // ADD_HOOK(PictureBookLiveSelectScreenPresenter_OnSelectMusic,
+        //     Il2cppUtils::GetMethodPointer("Assembly-CSharp.dll", "Campus.OutGame",
+        //         "PictureBookLiveSelectScreenPresenter", "OnSelectMusicAsync"));
 
         ADD_HOOK(VLDOF_IsActive,
                  Il2cppUtils::GetMethodPointer("Unity.RenderPipelines.Universal.Runtime.dll", "VL.Rendering",
@@ -1920,10 +2112,41 @@ namespace GakumasLocal::HookMain {
                  Il2cppUtils::GetMethodPointer("campus-submodule.Runtime.dll", "Campus.Common",
                                                "CampusQualityManager", "set_TargetFrameRate"));
 
-        ADD_HOOK(Internal_LogException, Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.DebugLogHandler::Internal_LogException(System.Exception,UnityEngine.Object)"));
-        ADD_HOOK(Internal_Log, Il2cppUtils::il2cpp_resolve_icall(
-                "UnityEngine.DebugLogHandler::Internal_Log(UnityEngine.LogType,UnityEngine.LogOption,System.String,UnityEngine.Object)"));
+        // Unity 6 no longer exposes these two methods through the old icall
+        // names in this player. Resolve their managed IL2CPP methodPointer
+        // through GetMethod() and use hook signatures with a trailing MethodInfo*.
+        const auto Internal_LogException_Method = Il2cppUtils::GetMethod(
+            "UnityEngine.CoreModule.dll",
+            "UnityEngine",
+            "DebugLogHandler",
+            "Internal_LogException",
+            { "System.Exception", "UnityEngine.Object" }
+        );
+        ADD_HOOK(
+            Internal_LogException,
+            Internal_LogException_Method
+                ? Internal_LogException_Method->function
+                : nullptr
+        );
+
+        const auto Internal_Log_Method = Il2cppUtils::GetMethod(
+            "UnityEngine.CoreModule.dll",
+            "UnityEngine",
+            "DebugLogHandler",
+            "Internal_Log",
+            {
+                "UnityEngine.LogType",
+                "UnityEngine.LogOption",
+                "System.String",
+                "UnityEngine.Object"
+            }
+        );
+        ADD_HOOK(
+            Internal_Log,
+            Internal_Log_Method
+                ? Internal_Log_Method->function
+                : nullptr
+        );
 
         // 双端
         ADD_HOOK(InternalSetOrientationAsync,
@@ -1960,14 +2183,102 @@ namespace GakumasLocal::HookMain {
         //    "AspectRatioHandler", "WindowProc"));
 
         if (GakumasLocal::Config::dmmUnlockSize) {
-			std::thread([]() {
-				std::this_thread::sleep_for(std::chrono::seconds(3));
-                    auto hWnd = FindWindowW(L"UnityWndClass", L"gakumas");
-                    // 添加可调整大小的边框和最大化按钮
-                    LONG style = GetWindowLong(hWnd, GWL_STYLE);
-                    style |= WS_THICKFRAME | WS_MAXIMIZEBOX;
-                    SetWindowLong(hWnd, GWL_STYLE, style);
-				}).detach();
+            std::thread([]() {
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+
+                const auto currentProcessId = GetCurrentProcessId();
+                HWND hWnd = nullptr;
+                HWND candidate = nullptr;
+
+                while ((candidate = FindWindowExW(
+                            nullptr,
+                            candidate,
+                            L"UnityWndClass",
+                            nullptr
+                        )) != nullptr) {
+                    DWORD windowProcessId = 0;
+                    GetWindowThreadProcessId(
+                        candidate,
+                        &windowProcessId
+                    );
+
+                    if (windowProcessId == currentProcessId) {
+                        hWnd = candidate;
+                        break;
+                    }
+                }
+
+                if (!hWnd) {
+                    Log::Error(
+                        "DMM unlock size failed: Unity window not found."
+                    );
+                    return;
+                }
+
+                SetLastError(ERROR_SUCCESS);
+
+                auto style = GetWindowLongPtrW(
+                    hWnd,
+                    GWL_STYLE
+                );
+
+                if (style == 0 &&
+                    GetLastError() != ERROR_SUCCESS) {
+                    Log::ErrorFmt(
+                        "DMM unlock size failed: "
+                        "GetWindowLongPtrW error=%lu",
+                        GetLastError()
+                    );
+                    return;
+                }
+
+                style |= WS_THICKFRAME |
+                         WS_MAXIMIZEBOX;
+
+                SetLastError(ERROR_SUCCESS);
+
+                const auto previousStyle =
+                    SetWindowLongPtrW(
+                        hWnd,
+                        GWL_STYLE,
+                        style
+                    );
+
+                if (previousStyle == 0 &&
+                    GetLastError() != ERROR_SUCCESS) {
+                    Log::ErrorFmt(
+                        "DMM unlock size failed: "
+                        "SetWindowLongPtrW error=%lu",
+                        GetLastError()
+                    );
+                    return;
+                }
+
+                if (!SetWindowPos(
+                        hWnd,
+                        nullptr,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE |
+                        SWP_NOSIZE |
+                        SWP_NOZORDER |
+                        SWP_NOACTIVATE |
+                        SWP_FRAMECHANGED
+                    )) {
+                    Log::ErrorFmt(
+                        "DMM unlock size failed: "
+                        "SetWindowPos error=%lu",
+                        GetLastError()
+                    );
+                    return;
+                }
+
+                Log::Info(
+                    "DMM window size unlocked."
+                );
+            }).detach();
         }
 
         g_extra_assetbundle_paths.push_back((gakumasLocalPath / "local-files/gakumasassets").string());
@@ -2002,7 +2313,7 @@ namespace GakumasLocal::HookMain {
             UnityResolveProgress::startInit = true;
             UnityResolveProgress::assembliesProgress.total = 2;
             UnityResolveProgress::assembliesProgress.current = 1;
-            UnityResolveProgress::classProgress.total = 36;
+            UnityResolveProgress::classProgress.total = 43;
             UnityResolveProgress::classProgress.current = 0;
         }
 

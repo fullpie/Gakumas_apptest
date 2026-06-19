@@ -118,7 +118,7 @@ object FileDownloader {
 
     }
 
-    fun downloadFileTo(
+    fun downloadFileToPath(
         url: String,
         outputFile: File,
         onDownload: (Float, downloaded: Long, size: Long) -> Unit,
@@ -131,6 +131,8 @@ object FileDownloader {
                 onFailed(-1, "Another file is downloading.")
                 return
             }
+            outputFile.parentFile?.mkdirs()
+
             val request = Request.Builder()
                 .url(url)
                 .build()
@@ -214,6 +216,15 @@ object FileDownloader {
             call = null
         }
     }
+
+    fun downloadFileTo(
+        url: String,
+        outputFile: File,
+        onDownload: (Float, downloaded: Long, size: Long) -> Unit,
+        onSuccess: (File) -> Unit,
+        onFailed: (Int, String) -> Unit,
+        checkContentTypes: List<String>? = null
+    ) = downloadFileToPath(url, outputFile, onDownload, onSuccess, onFailed, checkContentTypes)
 
     fun downloadFileResumable(
         url: String,

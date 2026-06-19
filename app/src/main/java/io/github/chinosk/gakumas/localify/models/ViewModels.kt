@@ -43,11 +43,12 @@ class ResourceCollapsibleBoxViewModelFactory(private val initiallyExpanded: Bool
 
 
 class ProgramConfigViewModelFactory(private val initialValue: ProgramConfig,
-                                    private val localResourceVersion: String) : ViewModelProvider.Factory {
+                                    private val localResourceVersion: String,
+                                    private val localTextureResourceVersion: String) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ProgramConfigViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return ProgramConfigViewModel(initialValue, localResourceVersion) as T
+            return ProgramConfigViewModel(initialValue, localResourceVersion, localTextureResourceVersion) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
@@ -62,7 +63,8 @@ data class ConfirmStateModel(
     var p: Boolean = false
 )
 
-class ProgramConfigViewModel(initValue: ProgramConfig, initLocalResourceVersion: String) : ViewModel() {
+class ProgramConfigViewModel(initValue: ProgramConfig, initLocalResourceVersion: String,
+                             initLocalTextureResourceVersion: String) : ViewModel() {
     val configState = MutableStateFlow(initValue)
     val config: StateFlow<ProgramConfig> = configState.asStateFlow()
 
@@ -80,6 +82,18 @@ class ProgramConfigViewModel(initValue: ProgramConfig, initLocalResourceVersion:
 
     val errorStringState = MutableStateFlow("")
     val errorString: StateFlow<String> = errorStringState.asStateFlow()
+
+    val textureDownloadProgressState = MutableStateFlow(-1f)
+    val textureDownloadProgress: StateFlow<Float> = textureDownloadProgressState.asStateFlow()
+
+    val textureDownloadAbleState = MutableStateFlow(true)
+    val textureDownloadAble: StateFlow<Boolean> = textureDownloadAbleState.asStateFlow()
+
+    val localTextureResourceVersionState = MutableStateFlow(initLocalTextureResourceVersion)
+    val localTextureResourceVersion: StateFlow<String> = localTextureResourceVersionState.asStateFlow()
+
+    val textureErrorStringState = MutableStateFlow("")
+    val textureErrorString: StateFlow<String> = textureErrorStringState.asStateFlow()
 
     val mainUIConfirmState = MutableStateFlow(ConfirmStateModel())
     val mainUIConfirm: StateFlow<ConfirmStateModel> = mainUIConfirmState.asStateFlow()

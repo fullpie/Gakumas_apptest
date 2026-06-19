@@ -693,7 +693,7 @@ namespace GakumasLocal::Local {
         }
 
         if (unTransResultRet.empty() || (splitTransStat == SplitTagsTranslationStat::NO_SPLIT)) {
-            DumpGenericText(origText);
+            DumpGenericText(origText, DumpStrStat::SPLITTABLE_ORIG);
         }
         else {
             for (const auto& i : unTransResultRet) {

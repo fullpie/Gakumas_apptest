@@ -39,6 +39,7 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         libMarryKotone.cpp
         GakumasLocalify/Plugin.cpp
         GakumasLocalify/Hook.cpp
+        GakumasLocalify/HookTexture.cpp
         GakumasLocalify/Log.cpp
         GakumasLocalify/Misc.cpp
         GakumasLocalify/Local.cpp

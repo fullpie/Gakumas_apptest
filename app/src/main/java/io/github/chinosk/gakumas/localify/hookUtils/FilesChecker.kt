@@ -59,6 +59,7 @@ object FilesChecker {
         if (!pluginBasePath.exists()) {
             pluginBasePath.mkdirs()
         }
+        val skipBuiltInTexture2d = File(filesDir, "$localizationFilesDir/texture2d").exists()
 
         if (!cleanAssets(filesDir)) {
             Log.e("GakumasLocal", "Failed to clean local assets before built-in update")
@@ -70,7 +71,7 @@ object FilesChecker {
             basePath: String,
             action: (String, InputStream?) -> Unit
         ) {
-            val assetFiles = assets.list(basePath)!!
+            val assetFiles = assets.list(basePath) ?: emptyArray()
             for (file in assetFiles) {
                 try {
                     assets.open("$basePath/$file")
@@ -84,6 +85,12 @@ object FilesChecker {
             }
         }
         forAllAssetFiles(localizationFilesDir) { path, file ->
+            if ((path == "$localizationFilesDir/texture2d" ||
+                    path.startsWith("$localizationFilesDir/texture2d/")) &&
+                skipBuiltInTexture2d) {
+                return@forAllAssetFiles
+            }
+
             val outFile = File(filesDir, path)
             if (file == null) {
                 outFile.mkdirs()
@@ -175,7 +182,6 @@ object FilesChecker {
         }
         return File(pluginBasePath, "local-files")
     }
-
     fun cleanAssets(baseFilesDir: File): Boolean {
         val localFilesDir = getLocalFilesDir(baseFilesDir)
 
