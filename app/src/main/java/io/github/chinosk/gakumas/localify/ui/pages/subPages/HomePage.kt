@@ -179,8 +179,12 @@ fun HomePage(modifier: Modifier = Modifier,
         }
         if (game != null) {
             val installed = game.installedVersionName ?: "not installed"
-            val patchState = if (game.installedIsPatched) "patched" else "not patched"
-            lines.add("Game: $installed ($patchState) -> ${game.metadata.gameVersion}")
+            val patchState = if (game.installedIsPatched) {
+                game.installedPatchMode ?: "patched"
+            } else {
+                "not patched"
+            }
+            lines.add("Game: $installed ($patchState) -> ${game.metadata.gameVersion} (${game.metadata.patchMode})")
         }
         else {
             lines.add("Game patch: current")

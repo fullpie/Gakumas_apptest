@@ -6,14 +6,18 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
+import java.util.zip.ZipFile
 
 
 @Serializable
@@ -76,7 +80,8 @@ data class GamePatchUpdate(
     val metadata: GamePatchMetadata,
     val asset: OnlinePatchAsset,
     val installedVersionName: String?,
-    val installedIsPatched: Boolean
+    val installedIsPatched: Boolean,
+    val installedPatchMode: String?
 )
 
 
@@ -170,8 +175,19 @@ object OnlineUpdateChecker {
             } ?: continue
             val installedVersion = getPackageVersionName(context, metadata.gamePackageName)
             val installedIsPatched = isPackagePatched(context, metadata.gamePackageName)
-            if (installedVersion != metadata.gameVersion || !installedIsPatched) {
-                return GamePatchUpdate(release, metadata, patchedApk, installedVersion, installedIsPatched)
+            val installedPatchMode = getInstalledPatchMode(context, metadata.gamePackageName)
+            if (installedVersion != metadata.gameVersion ||
+                !installedIsPatched ||
+                installedPatchMode != metadata.patchMode
+            ) {
+                return GamePatchUpdate(
+                    release,
+                    metadata,
+                    patchedApk,
+                    installedVersion,
+                    installedIsPatched,
+                    installedPatchMode
+                )
             }
         }
         return null
@@ -187,23 +203,39 @@ object OnlineUpdateChecker {
         }.getOrNull()
     }
 
+    private fun getApplicationInfo(context: Context, packageName: String): ApplicationInfo {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getApplicationInfo(
+                packageName,
+                PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+        }
+    }
+
     private fun isPackagePatched(context: Context, packageName: String): Boolean {
         return runCatching {
-            val appInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.packageManager.getApplicationInfo(
-                    packageName,
-                    PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                context.packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
-            }
-            hasLspatchMetadata(appInfo)
+            hasLspatchMetadata(getApplicationInfo(context, packageName))
         }.getOrDefault(false)
     }
 
     private fun hasLspatchMetadata(appInfo: ApplicationInfo): Boolean {
         return appInfo.metaData?.containsKey("lspatch") == true
+    }
+
+    private fun getInstalledPatchMode(context: Context, packageName: String): String? {
+        return runCatching {
+            val appInfo = getApplicationInfo(context, packageName)
+            ZipFile(appInfo.sourceDir).use { apk ->
+                val entry = apk.getEntry("assets/lspatch/config.json") ?: return@runCatching null
+                val text = apk.getInputStream(entry).bufferedReader().use { it.readText() }
+                val config = json.parseToJsonElement(text).jsonObject
+                val useManager = config["useManager"]?.jsonPrimitive?.booleanOrNull ?: false
+                if (useManager) "lspatch-manager" else "lspatch-embedded"
+            }
+        }.getOrNull()
     }
 
     private fun compareVersions(left: String, right: String): Int {
