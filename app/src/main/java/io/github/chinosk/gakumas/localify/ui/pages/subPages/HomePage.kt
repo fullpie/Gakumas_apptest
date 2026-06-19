@@ -2,6 +2,7 @@ package io.github.chinosk.gakumas.localify.ui.pages.subPages
 
 import io.github.chinosk.gakumas.localify.ui.components.GakuGroupBox
 import android.content.res.Configuration.UI_MODE_NIGHT_NO
+import android.os.Environment
 import android.util.Log
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -119,24 +120,27 @@ fun HomePage(modifier: Modifier = Modifier,
         onlineChecking = true
         onlineErrorString = ""
         onlineDownloadProgress = 0f
-        onlineStatus = "Downloading $label..."
-        val outputFile = File(File(context.filesDir, "downloads"), fileName)
-        FileDownloader.downloadFileTo(
-            url,
-            outputFile,
-            checkContentTypes = listOf(
-                "application/vnd.android.package-archive",
-                "application/octet-stream",
-                "binary/octet-stream"
-            ),
+        onlineStatus = "Starting background download for $label..."
+        val downloadRoot = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: File(context.filesDir, "downloads")
+        val outputFile = File(
+            File(downloadRoot, "online-updates"),
+            fileName
+        )
+        FileDownloader.downloadFileWithSystemManager(
+            context = context,
+            url = url,
+            outputFile = outputFile,
+            title = fileName,
+            description = "Downloading $label",
             onDownload = { progress, downloaded, size ->
                 context.runOnUiThread {
                     onlineDownloadProgress = progress
                     onlineStatus = if (size > 0) {
-                        "Downloading $label: ${formatFileSize(downloaded)} / ${formatFileSize(size)}"
+                        "Background downloading $label: ${formatFileSize(downloaded)} / ${formatFileSize(size)}"
                     }
                     else {
-                        "Downloading $label: ${formatFileSize(downloaded)}"
+                        "Background downloading $label: ${formatFileSize(downloaded)}"
                     }
                 }
             },

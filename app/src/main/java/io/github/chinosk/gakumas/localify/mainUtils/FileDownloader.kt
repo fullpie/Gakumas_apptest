@@ -1,11 +1,15 @@
 package io.github.chinosk.gakumas.localify.mainUtils
 
+import android.app.DownloadManager
+import android.content.Context
+import android.net.Uri
 import okhttp3.*
 import java.io.IOException
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 object FileDownloader {
     private val client = OkHttpClient.Builder()
@@ -14,7 +18,12 @@ object FileDownloader {
         .readTimeout(0, TimeUnit.SECONDS)
         .build()
 
+    @Volatile
     private var call: Call? = null
+    @Volatile
+    private var downloadManager: DownloadManager? = null
+    @Volatile
+    private var downloadManagerId: Long? = null
 
     fun requestGet(request: Request, callback: Callback) {
         val client = OkHttpClient.Builder()
@@ -210,9 +219,94 @@ object FileDownloader {
         }
     }
 
+    fun downloadFileWithSystemManager(
+        context: Context,
+        url: String,
+        outputFile: File,
+        title: String,
+        description: String,
+        onDownload: (Float, downloaded: Long, size: Long) -> Unit,
+        onSuccess: (File) -> Unit,
+        onFailed: (Int, String) -> Unit
+    ) {
+        try {
+            if (call != null || downloadManagerId != null) {
+                onFailed(-1, "Another file is downloading.")
+                return
+            }
+
+            outputFile.parentFile?.mkdirs()
+            if (outputFile.exists()) outputFile.delete()
+
+            val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val request = DownloadManager.Request(Uri.parse(url))
+                .setTitle(title)
+                .setDescription(description)
+                .setMimeType("application/vnd.android.package-archive")
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(true)
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationUri(Uri.fromFile(outputFile))
+
+            val id = manager.enqueue(request)
+            downloadManager = manager
+            downloadManagerId = id
+
+            thread(name = "system-download-progress") {
+                val query = DownloadManager.Query().setFilterById(id)
+                while (downloadManagerId == id) {
+                    manager.query(query)?.use { cursor ->
+                        if (!cursor.moveToFirst()) {
+                            downloadManagerId = null
+                            downloadManager = null
+                            onFailed(-1, "Download no longer exists.")
+                            return@thread
+                        }
+
+                        val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                        val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                        val size = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                        val progress = if (size > 0) downloaded.toFloat() / size else 0f
+                        onDownload(progress, downloaded, size)
+
+                        when (status) {
+                            DownloadManager.STATUS_SUCCESSFUL -> {
+                                downloadManagerId = null
+                                downloadManager = null
+                                onDownload(1f, outputFile.length(), outputFile.length())
+                                onSuccess(outputFile)
+                                return@thread
+                            }
+                            DownloadManager.STATUS_FAILED -> {
+                                val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                                downloadManagerId = null
+                                downloadManager = null
+                                outputFile.delete()
+                                onFailed(reason, "System download failed: $reason")
+                                return@thread
+                            }
+                        }
+                    }
+                    Thread.sleep(700)
+                }
+            }
+        }
+        catch (e: Exception) {
+            downloadManagerId = null
+            downloadManager = null
+            outputFile.delete()
+            onFailed(-1, e.message ?: e.toString())
+        }
+    }
+
     fun cancel() {
         call?.cancel()
         this@FileDownloader.call = null
+        downloadManagerId?.let { id ->
+            downloadManager?.remove(id)
+        }
+        downloadManagerId = null
+        downloadManager = null
     }
 
     /**
