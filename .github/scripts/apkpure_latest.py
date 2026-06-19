@@ -28,8 +28,11 @@ def probe_version(url: str) -> str:
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Mozilla/5.0",
+            # APKPure currently blocks browser-like probes on this endpoint, while
+            # aria2-style range requests still return the redirect and filename.
+            "User-Agent": "aria2/1.37.0",
             "Accept": "*/*",
+            "Range": "bytes=0-0",
         },
     )
     with urllib.request.urlopen(request, timeout=45) as response:

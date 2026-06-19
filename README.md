@@ -4,64 +4,58 @@
 
 ## 使用方式
 
-1. 到本倉庫的 Release 下載 `app-v...` 版本的 `GakumasLocalify-*.apk`。
-2. 安裝後打開 app，首頁會自動檢查：
-   - app 本體是否有新版；
-   - 是否有新的雲端 patched game APK。
-3. 語言包仍可在 app 內自行選擇：
-   - 內建語言包；
-   - GitHub Release API 語言包；
-   - 自訂 ZIP 語言包。
+1. 到本倉庫的 Releases 下載最新 `app-v...` 版本的 `GakumasLocalify-*.apk`。
+2. 安裝並開啟 app。
+3. 在 app 內檢查更新：
+   - App APK：更新這個管理工具本身。
+   - Game Patch：下載雲端預先 patch 好的遊戲 APK。
+   - 翻譯包：仍由 app 內的翻譯資源更新功能處理，不需要觸發本倉庫 Actions。
 
-如果安裝時顯示簽名衝突，先解除安裝舊版 app 或舊版 patched game，再重新安裝。GitHub Actions 產出的 APK 和你本機重新打包的 APK 不一定會使用同一個簽名。
+`app-v...` 和 `game-v...` 是分開的 release channel。一般翻譯包更新只需要更新翻譯包 release，不需要重新 build app 或重新 patch 遊戲 APK。
 
-## Release Channel
+## 下載與安裝限制
 
-- `app-v...`：Gakumas Localify app 本體更新。
-- `game-v...`：雲端 patched game APK。此模式只 patch 遊戲本體，不內嵌語言包，所以使用者仍可在 app 內切換語言包來源。
+App 和 patched game 都是透過 GitHub Releases 下載。下載 APK 後會交給 Android 系統安裝器處理。
 
-app 端會抓 GitHub Releases 清單並依照 tag 前綴分流，不使用 `/releases/latest`，避免 app 與 game 兩種 release 互相蓋掉。
+Android 覆蓋安裝要求「package name 相同」且「簽名相同」：
+
+- App 從 `app-v3.2.3` 起使用固定 Actions signing secrets 簽名。若你手機上已安裝舊的 debug 或不同簽名版本，第一次升級可能需要先解除安裝；之後同一簽名的新版應可覆蓋安裝。
+- Patched game APK 是 LSPatch 重新簽名後的 APK，不能覆蓋官方 Google Play / APKPure 原版遊戲。它只能覆蓋同 package 且同簽名的舊 patched game。
+- 如果安裝時出現簽名衝突，先解除安裝舊版再裝新版。
 
 ## 自行編譯 App
 
-Fork 或 clone 後可以直接跑 GitHub Actions 的 `Android CI`。若要產出可穩定升級的 signed APK，請在 repo secrets 設定：
+你也可以 fork 或 clone 本倉庫後用 GitHub Actions 編譯 app。`Android CI` 會產出 APK artifact；推送 `app-v...` tag 時會建立 app release，並附上 `gkms-app-update.json` 供 app 內更新檢查使用。
+
+建議在 repo secrets 設定固定簽名資料，否則 release 會退回 debug APK，未來較容易遇到覆蓋安裝簽名衝突：
 
 - `KEYSTOREB64`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEYSTORE_PASSWORD`
 - `ANDROID_KEY_PASSWORD`
 
-推送 `app-v3.2.0` 這類 tag 時，Actions 會建立 app release，並附上 `gkms-app-update.json` 供 app 內更新檢查使用。若沒有設定簽名 secrets，Actions 會退回上傳 debug APK；這種 APK 可下載使用，但未必能覆蓋安裝舊版。
+## Game Patch Release
 
-## 雲端 Patch Game
+`Game Patch Release` workflow 會在 GitHub Actions 雲端建立 patched game APK。
 
-`Game Patch Release` workflow 支援兩種來源：
+預設來源是 APKPure：
 
-### manual_xapk
+- `source`: `apkpure`
+- 不需要手動貼 XAPK URL。
+- workflow 會先用 APKPure latest XAPK endpoint 偵測版本；若版本已經存在對應 `game-v...` tag 且沒有 `force`，會直接跳過。
+- 若版本預查被擋，workflow 會下載 XAPK、讀 manifest 取得實際版本，再用 tag 判斷是否需要繼續。
 
-這是最容易跑通的方式。到 APKPure 或其他來源取得真正的 `.xapk` 下載直連後，在 Actions 手動執行：
+可用的手動來源：
 
-- `source`: `manual_xapk`
-- `xapk_url`: `.xapk` 直連，不是 APKPure 網頁 URL
-- `game_version`: 例如 `3.1.1`
-- `force`: 如果要覆蓋同版本 release，設為 `true`
+- `manual_xapk`：手動提供 `.xapk` 直鏈與 `game_version`。
+- `google_play`：保留作為 Google Play 來源，需要設定 `PLAY_EMAIL` 與 `AAS_TOKEN` secrets。
 
-workflow 會下載 XAPK、檢查 manifest 的 package/version、用 `APKEditor` 合併 split / asset pack，再用本 repo 的 `app/libs/lspatch.jar` 產出 manager-mode patched APK，最後建立 `game-v...` release 和 `gkms-game-patch.json`。
+patch 流程會下載 XAPK 或 split APKs，使用 `APKEditor` 合併，再用本 repo 的 `app/libs/lspatch.jar` 產出 embedded-mode patched APK，最後建立 `game-v...` release 和 `gkms-game-patch.json`。
 
-### google_play
+## Actions 觸發範圍
 
-這條路線會偵測 Google Play 上的遊戲版本，使用 `apkeep` 下載官方 split APK，再合併與 patch。
-
-需要在 repo secrets 設定：
-
-- `PLAY_EMAIL`
-- `AAS_TOKEN`
-
-如果沒有設定這兩個 secrets，排程觸發的 Google Play patch 會自動跳過；手動選 `google_play` 時則會報錯提醒。
-
-如果 repo 是 private，app 端無法不帶 token 讀取 GitHub Releases；要讓一般使用者直接在 app 內檢查/下載更新，請把 release 所在 repo 設為 public，或把 metadata / APK 發佈到另一個 public repo。
-
-請確認你有權限散布 workflow 產出的檔案。若不想公開完整 patched game APK，可以只保留 private artifact，讓使用者 fork 後用自己的 Google Play 憑證執行 workflow。
+- `Android CI` 只在 app 原始碼、Gradle 設定、或 app build workflow 變動時自動執行；README、翻譯包更新、game patch workflow 變動不會觸發 app build。
+- `Game Patch Release` 可手動執行，也可排程檢查遊戲新版本。沒有新遊戲版本時應跳過，不重新發同版本 release，除非手動設定 `force=true`。
 
 ## Credits
 
