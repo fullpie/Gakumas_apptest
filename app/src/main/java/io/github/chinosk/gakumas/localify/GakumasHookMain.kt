@@ -32,6 +32,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
+import java.util.zip.ZipFile
 import kotlin.system.measureTimeMillis
 import io.github.chinosk.gakumas.localify.hookUtils.FileHotUpdater
 import io.github.chinosk.gakumas.localify.hookUtils.FilesChecker.localizationFilesDir
@@ -45,12 +46,17 @@ val TAG = "GakumasLocalify"
 
 class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private lateinit var modulePath: String
-    private var nativeLibLoadSuccess: Boolean
+    @Volatile
+    private var nativeLibLoadSuccess = false
+    private var nativeLibLoadError: String? = null
+    @Volatile
+    private var loopStarted = false
     private var alreadyInitialized = false
     private val targetPackageName = "com.bandainamcoent.idolmaster_gakuen"
     private val nativeLibName = "MarryKotone"
 
     private var gkmsDataInited = false
+    private var pendingGkmsData: String? = null
 
     private var getConfigError: Exception? = null
     private var externalFilesChecked: Boolean = false
@@ -87,7 +93,9 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     val keyCode = keyEvent.keyCode
                     val action = keyEvent.action
                     // Log.d(TAG, "Key event: keyCode=$keyCode, action=$action")
-                    keyboardEvent(keyCode, action)
+                    if (nativeLibLoadSuccess) {
+                        keyboardEvent(keyCode, action)
+                    }
                 }
             }
         )
@@ -120,18 +128,20 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     val hatX = motionEvent.getAxisValue(MotionEvent.AXIS_HAT_X)
                     val hatY = motionEvent.getAxisValue(MotionEvent.AXIS_HAT_Y)
 
-                    // 处理摇杆和扳机事件
-                    joystickEvent(
-                        action,
-                        leftStickX,
-                        leftStickY,
-                        rightStickX,
-                        rightStickY,
-                        leftTrigger,
-                        rightTrigger,
-                        hatX,
-                        hatY
-                    )
+                    if (nativeLibLoadSuccess) {
+                        // Handle joystick and trigger events.
+                        joystickEvent(
+                            action,
+                            leftStickX,
+                            leftStickY,
+                            rightStickX,
+                            rightStickY,
+                            leftTrigger,
+                            rightTrigger,
+                            hatX,
+                            hatY
+                        )
+                    }
                 }
             }
         )
@@ -183,10 +193,16 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     }
 
                     val app = AndroidAppHelper.currentApplication()
-                    if (nativeLibLoadSuccess) {
+                    if (app == null) {
+                        Log.e(TAG, "UnityPlayer.loadNative: application is null")
+                        return
+                    }
+
+                    if (ensureNativeLibraryLoaded(app.applicationContext)) {
                         showToast("lib$nativeLibName.so loaded.")
                     }
                     else {
+                        Log.e(TAG, "Load native library lib$nativeLibName.so failed: $nativeLibLoadError")
                         showToast("Load native library lib$nativeLibName.so failed.")
                         return
                     }
@@ -194,21 +210,321 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     if (!gkmsDataInited) {
                         requestConfig(app.applicationContext)
                     }
+                    applyPendingConfig()
 
                     FilesChecker.initDir(app.filesDir, modulePath)
-                    initHook(
-                        "${app.applicationInfo.nativeLibraryDir}/libil2cpp.so",
-                        File(
-                            app.filesDir.absolutePath,
-                            FilesChecker.localizationFilesDir
-                        ).absolutePath
-                    )
+                    try {
+                        initHook(
+                            "${app.applicationInfo.nativeLibraryDir}/libil2cpp.so",
+                            File(
+                                app.filesDir.absolutePath,
+                                FilesChecker.localizationFilesDir
+                            ).absolutePath
+                        )
+                    }
+                    catch (e: Throwable) {
+                        Log.e(TAG, "initHook failed", e)
+                        showToast("Init native hook failed.")
+                        return
+                    }
 
                     alreadyInitialized = true
+                    startLoopIfNeeded()
                 }
             })
+    }
 
-        startLoop()
+    private fun ensureNativeLibraryLoaded(context: Context): Boolean {
+        if (nativeLibLoadSuccess) {
+            return true
+        }
+
+        synchronized(this) {
+            if (nativeLibLoadSuccess) {
+                return true
+            }
+
+            nativeLibLoadError = null
+            if (trySystemLoadLibrary(nativeLibName)) {
+                nativeLibLoadSuccess = true
+                nativeLibLoadError = null
+                return true
+            }
+
+            if (tryLoadExtractedNativeLibraries(context)) {
+                nativeLibLoadSuccess = true
+                nativeLibLoadError = null
+                return true
+            }
+
+            return false
+        }
+    }
+
+    private fun trySystemLoadLibrary(libName: String): Boolean {
+        return try {
+            System.loadLibrary(libName)
+            Log.i(TAG, "Loaded native library with System.loadLibrary($libName)")
+            true
+        }
+        catch (e: UnsatisfiedLinkError) {
+            nativeLibLoadError = "System.loadLibrary($libName): ${e.message}"
+            Log.w(TAG, "System.loadLibrary($libName) failed", e)
+            false
+        }
+        catch (e: Throwable) {
+            nativeLibLoadError = "System.loadLibrary($libName): ${e.message}"
+            Log.e(TAG, "System.loadLibrary($libName) failed", e)
+            false
+        }
+    }
+
+    private fun tryLoadExtractedNativeLibraries(context: Context): Boolean {
+        var loadedMainLibrary = false
+        for (libName in listOf("xdl", "shadowhook", nativeLibName)) {
+            val libFile = findAndExtractNativeLibrary(context, libName, libName == nativeLibName)
+            if (libFile == null) {
+                if (libName == nativeLibName) {
+                    return false
+                }
+                continue
+            }
+
+            val loaded = tryLoadNativeFile(libName, libFile)
+            if (libName == nativeLibName) {
+                loadedMainLibrary = loaded
+                if (!loaded) {
+                    return false
+                }
+            }
+        }
+        return loadedMainLibrary
+    }
+
+    private fun tryLoadNativeFile(libName: String, libFile: File): Boolean {
+        return try {
+            System.load(libFile.absolutePath)
+            Log.i(TAG, "Loaded native library $libName from ${libFile.absolutePath}")
+            true
+        }
+        catch (e: UnsatisfiedLinkError) {
+            if (e.message?.contains("already loaded", ignoreCase = true) == true) {
+                Log.i(TAG, "Native library $libName is already loaded")
+                true
+            }
+            else {
+                nativeLibLoadError = "System.load(${libFile.name}): ${e.message}"
+                Log.e(TAG, "System.load(${libFile.absolutePath}) failed", e)
+                false
+            }
+        }
+        catch (e: Throwable) {
+            nativeLibLoadError = "System.load(${libFile.name}): ${e.message}"
+            Log.e(TAG, "System.load(${libFile.absolutePath}) failed", e)
+            false
+        }
+    }
+
+    private fun findAndExtractNativeLibrary(
+        context: Context,
+        libName: String,
+        required: Boolean
+    ): File? {
+        val libFileName = "lib$libName.so"
+        val sources = nativeSourceCandidates(context)
+
+        for (source in sources) {
+            extractNativeLibraryFromApk(context, source, libFileName)?.let {
+                return it
+            }
+        }
+
+        if (required) {
+            nativeLibLoadError = "$libFileName not found in: ${sources.joinToString { it.absolutePath }}"
+        }
+        return null
+    }
+
+    private fun nativeSourceCandidates(context: Context): List<File> {
+        val paths = mutableListOf<String>()
+        if (::modulePath.isInitialized) {
+            paths += modulePath.substringBefore("!")
+        }
+        paths += context.applicationInfo.sourceDir
+        paths += context.packageCodePath
+
+        return paths
+            .filter { it.isNotBlank() }
+            .distinct()
+            .map { File(it) }
+            .filter { it.isFile }
+    }
+
+    private fun extractNativeLibraryFromApk(context: Context, apkFile: File, libFileName: String): File? {
+        return try {
+            ZipFile(apkFile).use { zip ->
+                extractNativeLibraryFromZip(
+                    context,
+                    zip,
+                    "${apkFile.absolutePath}:${apkFile.length()}:${apkFile.lastModified()}",
+                    libFileName
+                )?.let {
+                    return it
+                }
+
+                val embeddedApks = zip.entries().asSequence()
+                    .filter { !it.isDirectory && it.name.endsWith(".apk", ignoreCase = true) }
+                    .toList()
+
+                for (embeddedEntry in embeddedApks) {
+                    val embeddedApk = extractEmbeddedApk(context, zip, embeddedEntry) ?: continue
+                    ZipFile(embeddedApk).use { embeddedZip ->
+                        extractNativeLibraryFromZip(
+                            context,
+                            embeddedZip,
+                            "${apkFile.absolutePath}!${embeddedEntry.name}:${embeddedEntry.crc}:${embeddedEntry.size}",
+                            libFileName
+                        )?.let {
+                            return it
+                        }
+                    }
+                }
+            }
+            null
+        }
+        catch (e: Throwable) {
+            Log.w(TAG, "Cannot inspect native libraries from ${apkFile.absolutePath}", e)
+            null
+        }
+    }
+
+    private fun extractNativeLibraryFromZip(
+        context: Context,
+        zip: ZipFile,
+        sourceStamp: String,
+        libFileName: String
+    ): File? {
+        for (abi in supportedAbis()) {
+            val entry = zip.getEntry("lib/$abi/$libFileName") ?: continue
+            return copyZipEntryToCache(context, zip, entry, abi, libFileName, sourceStamp)
+        }
+        return null
+    }
+
+    private fun extractEmbeddedApk(context: Context, zip: ZipFile, entry: java.util.zip.ZipEntry): File? {
+        val outDir = File(context.codeCacheDir, "gkms-localify-native/embedded")
+        val outFile = File(
+            outDir,
+            "module-${Integer.toHexString(entry.name.hashCode())}-${entry.crc}.apk"
+        )
+        val metaFile = File(outDir, "${outFile.name}.meta")
+        val stamp = "${entry.name}:${entry.crc}:${entry.size}"
+
+        return copyZipEntryToFile(zip, entry, outDir, outFile, metaFile, stamp)
+    }
+
+    private fun copyZipEntryToCache(
+        context: Context,
+        zip: ZipFile,
+        entry: java.util.zip.ZipEntry,
+        abi: String,
+        libFileName: String,
+        sourceStamp: String
+    ): File? {
+        val outDir = File(context.codeCacheDir, "gkms-localify-native/$abi")
+        val outFile = File(outDir, libFileName)
+        val metaFile = File(outDir, "$libFileName.meta")
+        val stamp = "$sourceStamp:${entry.name}:${entry.crc}:${entry.size}"
+
+        return copyZipEntryToFile(zip, entry, outDir, outFile, metaFile, stamp)?.also {
+            it.setReadable(true, false)
+            it.setExecutable(true, false)
+        }
+    }
+
+    private fun copyZipEntryToFile(
+        zip: ZipFile,
+        entry: java.util.zip.ZipEntry,
+        outDir: File,
+        outFile: File,
+        metaFile: File,
+        stamp: String
+    ): File? {
+        try {
+            if (!outDir.exists() && !outDir.mkdirs()) {
+                nativeLibLoadError = "Cannot create ${outDir.absolutePath}"
+                return null
+            }
+
+            val currentStamp = if (metaFile.isFile) {
+                runCatching { metaFile.readText() }.getOrNull()
+            }
+            else {
+                null
+            }
+
+            if (outFile.isFile && currentStamp == stamp) {
+                return outFile
+            }
+
+            val tempFile = File(outDir, "${outFile.name}.tmp")
+            zip.getInputStream(entry).use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            if (outFile.exists() && !outFile.delete()) {
+                Log.w(TAG, "Cannot delete old file ${outFile.absolutePath}; overwriting")
+            }
+
+            if (!tempFile.renameTo(outFile)) {
+                tempFile.copyTo(outFile, overwrite = true)
+                tempFile.delete()
+            }
+
+            metaFile.writeText(stamp)
+            return outFile
+        }
+        catch (e: Throwable) {
+            nativeLibLoadError = "Cannot extract ${entry.name}: ${e.message}"
+            Log.e(TAG, "Cannot extract ${entry.name}", e)
+            return null
+        }
+    }
+
+    private fun supportedAbis(): List<String> {
+        return (Build.SUPPORTED_ABIS.toList() + "arm64-v8a").distinct()
+    }
+
+    private fun applyPendingConfig() {
+        val data = pendingGkmsData ?: return
+        if (!nativeLibLoadSuccess) {
+            return
+        }
+
+        try {
+            loadConfig(data)
+            pendingGkmsData = null
+            Log.d(TAG, "gkmsData: $data")
+        }
+        catch (e: Throwable) {
+            Log.e(TAG, "loadConfig failed", e)
+        }
+    }
+
+    private fun startLoopIfNeeded() {
+        if (loopStarted) {
+            return
+        }
+
+        synchronized(this) {
+            if (loopStarted) {
+                return
+            }
+            loopStarted = true
+            startLoop()
+        }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -332,8 +648,13 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 }
             }
 
-            loadConfig(gkmsData)
-            Log.d(TAG, "gkmsData: $gkmsData")
+            pendingGkmsData = gkmsData
+            if (nativeLibLoadSuccess) {
+                applyPendingConfig()
+            }
+            else {
+                Log.d(TAG, "Deferring loadConfig until native library is loaded")
+            }
         }
     }
 
@@ -523,11 +844,6 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 .build()
         )
 
-        nativeLibLoadSuccess = try {
-            System.loadLibrary(nativeLibName)
-            true
-        } catch (e: UnsatisfiedLinkError) {
-            false
-        }
+        nativeLibLoadSuccess = trySystemLoadLibrary(nativeLibName)
     }
 }
