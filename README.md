@@ -50,7 +50,7 @@ Android 覆蓋安裝要求「package name 相同」且「簽名相同」：
 - `manual_xapk`：手動提供 `.xapk` 直鏈與 `game_version`。
 - `google_play`：保留作為 Google Play 來源，需要設定 `PLAY_EMAIL` 與 `AAS_TOKEN` secrets。
 
-patch 流程會下載 XAPK 或 split APKs，使用 `APKEditor` 合併，再用本 repo 的 `app/libs/lspatch.jar` 產出 embedded-mode patched APK，最後建立 `game-v...` release 和 `gkms-game-patch.json`。
+patch 流程會下載 XAPK 或 split APKs，使用 `APKEditor` 合併，再用 pinned `Kajaqq/gaku-patcher` embedded patcher 產出 embedded-mode patched APK，最後建立 `game-v...` release 和 `gkms-game-patch.json`。
 
 ## Actions 觸發範圍
 
@@ -62,4 +62,5 @@ patch 流程會下載 XAPK 或 split APKs，使用 `APKEditor` 合併，再用�
 - [LSPosed / LSPatch](https://github.com/LSPosed/LSPatch)
 - [EFForg/apkeep](https://github.com/EFForg/apkeep)
 - [REAndroid/APKEditor](https://github.com/REAndroid/APKEditor)
+- [Kajaqq/gaku-patcher](https://github.com/Kajaqq/gaku-patcher)
 - [GakumasTranslationData](https://github.com/fullpie/GakumasTranslationData)

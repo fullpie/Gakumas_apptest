@@ -41,6 +41,8 @@ env:
   GAME_ID: "com.bandainamcoent.idolmaster_gakuen"
   APKEEP_URL: "https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu"
   APKEDITOR_URL: "https://github.com/REAndroid/APKEditor/releases/download/V1.4.9/APKEditor-1.4.9.jar"
+  LSPATCH_EMBED_URL: "https://raw.githubusercontent.com/Kajaqq/gaku-patcher/f69ed461e16e1095e9d02ddf09dade73752fbd9a/lspatch_embed.jar"
+  LSPATCH_EMBED_SHA256: "81235ad19c5829b338ded6a59fdc6fa01d567b72cda32a4cf6c6fd373f0b372e"
 
 jobs:
   check:
@@ -197,11 +199,12 @@ jobs:
         run: |
           set -euo pipefail
           aria2c -x4 "$APKEDITOR_URL" -o APKEditor.jar
+          aria2c -x4 "$LSPATCH_EMBED_URL" -o LSPatchEmbed.jar
+          printf '%s  %s\n' "$LSPATCH_EMBED_SHA256" LSPatchEmbed.jar | sha256sum -c -
           if [ "$SOURCE" = "google_play" ]; then
             aria2c -x4 "$APKEEP_URL" -o apkeep
             chmod +x apkeep
           fi
-          test -f app/libs/lspatch.jar
 
       - name: Download Localify module APK
         run: |
@@ -272,7 +275,7 @@ jobs:
           set -euo pipefail
           rm -rf ls_patched
           set +e
-          java -jar app/libs/lspatch.jar -l 2 "$GAME_APK_NAME" -m "$LOCALIFY_MODULE_APK" -o ls_patched --force
+          java -jar LSPatchEmbed.jar "$GAME_APK_NAME" -m "$LOCALIFY_MODULE_APK" -o ls_patched --force
           lspatch_rc=$?
           set -e
           patched="$(find ls_patched -type f -name '*.apk' -print -quit || true)"
@@ -348,6 +351,7 @@ jobs:
 
             Source: ${{ env.SOURCE }}.
             Patch mode: LSPatch embedded mode using the latest Gakumas Localify app release as the module.
+            Embedded patcher: Kajaqq/gaku-patcher pinned lspatch_embed.jar.
 
             Required app package: io.github.chinosk.gakumas.localify.
           make_latest: false
