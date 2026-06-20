@@ -105,21 +105,6 @@ fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
         programConfig.checkBuiltInAssets = true
     }
 
-    val intent = Intent().apply {
-        setClassName(
-            "com.bandainamcoent.idolmaster_gakuen",
-            "com.google.firebase.MessagingUnityPlayerActivity"
-        )
-        putExtra("gkmsData", getConfigContent())
-        putExtra(
-            "localData",
-            getProgramConfigContent(listOf("transRemoteZipUrl", "useAPIAssetsURL",
-                "useAPITextureAssetsURL", "localAPIAssetsVersion", "p"), programConfig)
-        )
-        putExtra("lVerName", version)
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-    }
-
     val updateFile = File(filesDir, "update_trans.zip")
     val updateAPIFile = File(filesDir, "remote_files/remote.zip")
     val targetFile = if (programConfig.useAPIAssets && updateAPIFile.exists()) {
@@ -130,6 +115,33 @@ fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
     }
     else {
         null
+    }
+    val usingApiResourceCache = targetFile?.absolutePath == updateAPIFile.absolutePath
+    val launchProgramConfig = if (usingApiResourceCache && programConfig.delRemoteAfterUpdate) {
+        programConfig.copy(delRemoteAfterUpdate = false)
+    }
+    else {
+        programConfig
+    }
+    Log.i(TAG, "Resource cache before launch: useAPIAssets=${programConfig.useAPIAssets}, " +
+            "useRemoteAssets=${programConfig.useRemoteAssets}, " +
+            "apiExists=${updateAPIFile.exists()}, apiSize=${if (updateAPIFile.exists()) updateAPIFile.length() else 0}, " +
+            "remoteExists=${updateFile.exists()}, remoteSize=${if (updateFile.exists()) updateFile.length() else 0}, " +
+            "target=${targetFile?.absolutePath ?: "none"}, deleteAfter=${launchProgramConfig.delRemoteAfterUpdate}")
+
+    val intent = Intent().apply {
+        setClassName(
+            "com.bandainamcoent.idolmaster_gakuen",
+            "com.google.firebase.MessagingUnityPlayerActivity"
+        )
+        putExtra("gkmsData", getConfigContent())
+        putExtra(
+            "localData",
+            getProgramConfigContent(listOf("transRemoteZipUrl", "useAPIAssetsURL",
+                "useAPITextureAssetsURL", "localAPIAssetsVersion", "p"), launchProgramConfig)
+        )
+        putExtra("lVerName", version)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
     }
 
     if (targetFile != null) {
@@ -148,6 +160,10 @@ fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
         intent.putExtra("resource_file", dirUri)
         // intent.clipData = ClipData.newRawUri("resource_file", dirUri)
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        Log.i(TAG, "Resource uri attached: $dirUri")
+    }
+    else {
+        Log.i(TAG, "Resource uri not attached.")
     }
 
     val textureUpdateFile = TextureResourceUpdater.getCachedZipFile(this)

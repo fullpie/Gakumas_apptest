@@ -142,6 +142,7 @@ object FileHotUpdater {
         val tempExtractDir = File(filesDir, "${FilesChecker.localizationFilesDir}.tmp")
 
         try {
+            Log.i(TAG, "updateFilesFromZip uri=$zipFileUri deleteAfterUpdate=$deleteAfterUpdate")
             GakumasHookMain.showToast("Updating files from zip...")
 
             activity.contentResolver.openInputStream(zipFileUri).use { input ->
@@ -152,6 +153,7 @@ object FileHotUpdater {
                     input.copyTo(output)
                 }
             }
+            Log.i(TAG, "Copied translation zip: ${tempZipFile.length()} bytes")
 
             ZipFile(tempZipFile).use { zip ->
                 val rootPrefix = findZipResourceRoot(zip)
@@ -166,6 +168,12 @@ object FileHotUpdater {
             if (deleteAfterUpdate) {
                 activity.contentResolver.delete(zipFileUri, null, null)
             }
+            val installedVersionFile = File(filesDir, "${FilesChecker.localizationFilesDir}/$VERSION_FILE_NAME")
+            val localizationFile = File(filesDir, "${FilesChecker.localizationFilesDir}/local-files/localization.json")
+            Log.i(TAG, "Translation resources installed: version=" +
+                    "${installedVersionFile.takeIf { it.isFile }?.readText()?.trim() ?: "missing"}, " +
+                    "localizationJsonExists=${localizationFile.isFile}, " +
+                    "localizationJsonSize=${if (localizationFile.isFile) localizationFile.length() else 0}")
             GakumasHookMain.showToast("Update success.")
         }
         catch (e: java.io.FileNotFoundException) {
