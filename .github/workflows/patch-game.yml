@@ -332,14 +332,19 @@ jobs:
         if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
           set -euo pipefail
-          app_version_code="$(python - <<'PY'
+          # Game patch compatibility follows the embedded module version, not app-only release bumps.
+          module_version_code="$(python - <<'PY'
           import pathlib
           import re
 
           text = pathlib.Path("app/build.gradle").read_text(encoding="utf-8")
+          match = re.search(r'buildConfigField\s+"long",\s+"MODULE_VERSION_CODE",\s+"(\d+)L?"', text)
+          if match:
+              print(match.group(1))
+              raise SystemExit
           match = re.search(r"^\s*versionCode\s+(\d+)\s*$", text, re.MULTILINE)
           if not match:
-              raise SystemExit("Could not read app versionCode from app/build.gradle")
+              raise SystemExit("Could not read module or app versionCode from app/build.gradle")
           print(match.group(1))
           PY
           )"
@@ -349,7 +354,7 @@ jobs:
             --release-tag "$RELEASE_TAG" \
             --repository "$GITHUB_REPOSITORY" \
             --asset "$PATCHED_APK_NAME" \
-            --minimum-app-version-code "$app_version_code" \
+            --minimum-app-version-code "$module_version_code" \
             --source "$SOURCE" \
             --patch-mode "$PATCH_MODE" \
             --output gkms-game-patch.json

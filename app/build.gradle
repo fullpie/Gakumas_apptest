@@ -18,6 +18,9 @@ android {
         versionCode 26
         versionName "v3.4.8"
         buildConfigField "String", "VERSION_NAME", "\"${versionName}\""
+        // Only bump these when the module embedded into patched game APKs must change.
+        buildConfigField "long", "MODULE_VERSION_CODE", "26L"
+        buildConfigField "String", "MODULE_VERSION_NAME", "\"v3.4.8\""
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

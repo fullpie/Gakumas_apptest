@@ -179,19 +179,16 @@ object OnlineUpdateChecker {
             val installedVersion = getPackageVersionName(context, metadata.gamePackageName)
             val installedIsPatched = isPackagePatched(context, metadata.gamePackageName)
             val installedPatchMode = getInstalledPatchMode(context, metadata.gamePackageName)
-            val installedSha256 = if (installedIsPatched) {
-                getInstalledPackageSha256(context, metadata.gamePackageName)
-            } else {
-                null
-            }
-            val installedMatchesRelease = patchedApk.sha256?.let { expected ->
-                installedSha256?.equals(expected, ignoreCase = true) ?: true
-            } ?: true
-            if (installedVersion != metadata.gameVersion ||
-                !installedIsPatched ||
-                installedPatchMode != metadata.patchMode ||
-                !installedMatchesRelease
-            ) {
+            val shouldUpdateGamePatch = installedVersion != metadata.gameVersion ||
+                    !installedIsPatched ||
+                    installedPatchMode != metadata.patchMode
+            // A same-version patched APK can be rebuilt with a different hash; that alone must not force a game update.
+            if (shouldUpdateGamePatch) {
+                val installedSha256 = if (installedIsPatched) {
+                    getInstalledPackageSha256(context, metadata.gamePackageName)
+                } else {
+                    null
+                }
                 return GamePatchUpdate(
                     release,
                     metadata,

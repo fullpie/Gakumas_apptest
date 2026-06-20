@@ -140,7 +140,7 @@ fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
             getProgramConfigContent(listOf("transRemoteZipUrl", "useAPIAssetsURL",
                 "useAPITextureAssetsURL", "localAPIAssetsVersion", "p"), launchProgramConfig)
         )
-        putExtra("lVerName", version)
+        putExtra("lVerName", BuildConfig.MODULE_VERSION_NAME)
         flags = Intent.FLAG_ACTIVITY_NEW_TASK
     }
 

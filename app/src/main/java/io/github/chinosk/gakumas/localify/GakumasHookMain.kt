@@ -685,7 +685,7 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     private fun checkPluginVersion(activity: Activity, readVersion: String?) {
-        val buildVersionName = BuildConfig.VERSION_NAME
+        val buildVersionName = BuildConfig.MODULE_VERSION_NAME
         Log.i(TAG, "Checking Plugin Version: Build: $buildVersionName, Request: $readVersion")
         if (readVersion?.trim() == buildVersionName.trim()) {
             return
