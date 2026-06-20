@@ -147,50 +147,60 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
         )
 
         val appActivityClass = XposedHelpers.findClass("android.app.Activity", lpparam.classLoader)
+        fun handleActivityIntent(activity: Activity, intent: Intent? = activity.intent) {
+            gameActivity = activity
+            if (intent != null && activity.intent !== intent) {
+                activity.intent = intent
+            }
+            if (getConfigError != null) {
+                showGetConfigFailed(activity)
+            }
+            else {
+                initGkmsConfig(activity)
+            }
+        }
+
         XposedBridge.hookAllMethods(appActivityClass, "onStart", object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 super.beforeHookedMethod(param)
                 Log.d(TAG, "onStart")
-                val currActivity = param.thisObject as Activity
-                gameActivity = currActivity
-                if (getConfigError != null) {
-                    showGetConfigFailed(currActivity)
-                }
-                else {
-                    initGkmsConfig(currActivity)
-                }
+                handleActivityIntent(param.thisObject as Activity)
             }
         })
 
         XposedBridge.hookAllMethods(appActivityClass, "onResume", object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 Log.d(TAG, "onResume")
-                val currActivity = param.thisObject as Activity
-                gameActivity = currActivity
-                if (getConfigError != null) {
-                    showGetConfigFailed(currActivity)
-                }
-                else {
-                    initGkmsConfig(currActivity)
-                }
+                handleActivityIntent(param.thisObject as Activity)
             }
         })
 
-        XposedBridge.hookAllMethods(appActivityClass, "onNewIntent", object : XC_MethodHook() {
+        val onNewIntentHook = object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
-                Log.d(TAG, "onNewIntent")
                 val currActivity = param.thisObject as Activity
                 val newIntent = param.args[0] as? Intent ?: return
-                currActivity.intent = newIntent
-                gameActivity = currActivity
-                if (getConfigError != null) {
-                    showGetConfigFailed(currActivity)
-                }
-                else {
-                    initGkmsConfig(currActivity)
+                Log.d(TAG, "onNewIntent: ${currActivity.javaClass.name}")
+                handleActivityIntent(currActivity, newIntent)
+            }
+        }
+
+        val newIntentHookClasses = listOf(
+            "android.app.Activity",
+            "com.google.firebase.MessagingUnityPlayerActivity",
+            "com.unity3d.player.UnityPlayerActivity"
+        )
+        for (className in newIntentHookClasses) {
+            try {
+                val activityClass = XposedHelpers.findClass(className, lpparam.classLoader)
+                XposedBridge.hookAllMethods(activityClass, "onNewIntent", onNewIntentHook)
+                Log.i(TAG, "Hooked onNewIntent for $className")
+            }
+            catch (e: Throwable) {
+                if (className != "android.app.Activity") {
+                    Log.i(TAG, "Skip onNewIntent hook for $className: ${e.message}")
                 }
             }
-        })
+        }
 
         val cls = lpparam.classLoader.loadClass("com.unity3d.player.UnityPlayer")
         XposedHelpers.findAndHookMethod(
