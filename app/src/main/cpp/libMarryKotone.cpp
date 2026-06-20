@@ -21,6 +21,28 @@ UnityResolveProgress::Progress UnityResolveProgress::classProgress{};
 
 namespace
 {
+    bool EnsureShadowHookInitialized()
+    {
+        const int initResult = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false);
+        const int initErr = shadowhook_get_init_errno();
+        if (initErr == SHADOWHOOK_ERRNO_OK) {
+            GakumasLocal::Log::InfoFmt(
+                    "shadowhook initialized: result=%d initErr=%d",
+                    initResult,
+                    initErr
+            );
+            return true;
+        }
+
+        GakumasLocal::Log::ErrorFmt(
+                "shadowhook init failed: result=%d initErr=%d %s",
+                initResult,
+                initErr,
+                shadowhook_to_errmsg(initErr)
+        );
+        return false;
+    }
+
     class AndroidHookInstaller : public GakumasLocal::HookInstaller
     {
     public:
@@ -37,7 +59,12 @@ namespace
 
         void* InstallHook(void* addr, void* hook, void** orig) override
         {
-            return shadowhook_hook_func_addr(addr, hook, orig);
+            auto stub = shadowhook_hook_func_addr(addr, hook, orig);
+            if (stub == nullptr && shadowhook_get_errno() == SHADOWHOOK_ERRNO_UNINIT) {
+                EnsureShadowHookInitialized();
+                stub = shadowhook_hook_func_addr(addr, hook, orig);
+            }
+            return stub;
         }
 
         GakumasLocal::OpaqueFunctionPointer LookupSymbol(const char* name) override
@@ -69,6 +96,8 @@ Java_io_github_chinosk_gakumas_localify_GakumasHookMain_initHook(JNIEnv *env, jc
 
     const auto localizationFilesDirChars = env->GetStringUTFChars(localizationFilesDir, nullptr);
     const std::string localizationFilesDirCharsStr = localizationFilesDirChars;
+
+    EnsureShadowHookInitialized();
 
     auto& plugin = GakumasLocal::Plugin::GetInstance();
     plugin.InstallHook(std::make_unique<AndroidHookInstaller>(targetLibraryPathStr, localizationFilesDirCharsStr));
