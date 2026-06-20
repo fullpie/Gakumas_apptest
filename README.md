@@ -1,64 +1,75 @@
 # Gakumas Localify Android
 
-這是學園偶像大師 Android 版的 Localify / LSPatch 管理工具。
+學園偶像大師 Android 版 Localify / LSPatch 補丁工具。
 
-## 使用方式
+本專案提供兩種成品：
 
-1. 到本倉庫的 Releases 下載最新 `app-v...` 版本的 `GakumasLocalify-*.apk`。
-2. 安裝並開啟 app。
-3. 在 app 內檢查更新：
-   - App APK：更新這個管理工具本身。
-   - Game Patch：下載雲端預先 patch 好的遊戲 APK。
-   - 翻譯包：仍由 app 內的翻譯資源更新功能處理，不需要觸發本倉庫 Actions。
+- `app-v...`：Localify 補丁 app。
+- `game-v...`：已嵌入 Localify module 的遊戲補丁 APK。
 
-`app-v...` 和 `game-v...` 是分開的 release channel。一般翻譯包更新只需要更新翻譯包 release，不需要重新 build app 或重新 patch 遊戲 APK。
+## 一般安裝
 
-## 下載與安裝限制
+1. 到 GitHub Releases 下載最新 `app-v...` 的 `GakumasLocalify-*.apk`。
+2. 安裝 Localify app。
+3. 下載最新 `game-v...` 的 `Gakumas_*_Localify_Embedded.apk`。
+4. 安裝遊戲補丁 APK。
+5. 開啟 Localify app，更新翻譯包後從 app 啟動遊戲。
 
-App 和 patched game 都是透過 GitHub Releases 下載。下載 APK 後會交給 Android 系統安裝器處理。
+`game-v...` 的乾淨遊戲包來源預設為 APKPure 的 XAPK，GitHub Actions 會下載乾淨包後重新打包成補丁 APK。
 
-Android 覆蓋安裝要求「package name 相同」且「簽名相同」：
+## 簽名與覆蓋安裝
 
-- App 從 `app-v3.2.3` 起使用固定 Actions signing secrets 簽名。若你手機上已安裝舊的 debug 或不同簽名版本，第一次升級可能需要先解除安裝；之後同一簽名的新版應可覆蓋安裝。
-- Patched game APK 是 LSPatch 重新簽名後的 APK，不能覆蓋官方 Google Play / APKPure 原版遊戲。它只能覆蓋同 package 且同簽名的舊 patched game。
-- 如果安裝時出現簽名衝突，先解除安裝舊版再裝新版。
+`app-v...` release 的 app APK 使用固定 Android 簽名金鑰產出，後續同一簽名的新版可直接覆蓋安裝。
 
-## 自行編譯 App
+`game-v...` 是重新簽名的 patched game APK，不會和官方 / APKPure 原版簽名相同：
 
-你也可以 fork 或 clone 本倉庫後用 GitHub Actions 編譯 app。`Android CI` 會產出 APK artifact；推送 `app-v...` tag 時會建立 app release，並附上 `gkms-app-update.json` 供 app 內更新檢查使用。
+- 從官方版或 APKPure 原版切換到 patched game 時，通常需要先解除安裝原版。
+- 從本專案舊版 patched game 更新到新版 patched game，通常可以直接覆蓋安裝。
+- 若 Android 顯示簽名衝突，解除舊版後再安裝新版即可。
 
-建議在 repo secrets 設定固定簽名資料，否則 release 會退回 debug APK，未來較容易遇到覆蓋安裝簽名衝突：
+## 更新方式
+
+大部分情況只需要在 app 內更新翻譯包。
+
+當 app 提示有新版本，或遇到 app 功能異常、亂碼、下載失敗等問題時，再更新 `app-v...` APK。
+
+遊戲本體需要更新時，開啟 Gakumas Localify 更新遊戲即可。
+
+## 自行編譯 app
+
+Fork 或 clone 本倉庫後，可使用 GitHub Actions 的 `Android CI` 編譯 app。
+
+若要產出簽名 release，需設定以下 repository secrets：
 
 - `KEYSTOREB64`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEYSTORE_PASSWORD`
 - `ANDROID_KEY_PASSWORD`
 
-## Game Patch Release
+推送 `app-v...` tag 後，Actions 會建立 app release，並附上 `gkms-app-update.json` 供 app 內更新檢查使用。
 
-`Game Patch Release` workflow 會在 GitHub Actions 雲端建立 patched game APK。
+## 產生遊戲補丁 APK
 
-預設來源是 APKPure：
+`Game Patch Release` workflow 會在 GitHub Actions 產出 patched game APK。
 
-- `source`: `apkpure`
-- 不需要手動貼 XAPK URL。
-- workflow 會先用 APKPure latest XAPK endpoint 偵測版本；若版本已經存在對應 `game-v...` tag 且沒有 `force`，會直接跳過。
-- 若版本預查被擋，workflow 會下載 XAPK、讀 manifest 取得實際版本，再用 tag 判斷是否需要繼續。
+常用來源：
 
-可用的手動來源：
+- `apkpure`：自動下載 APKPure 最新 XAPK。
+- `manual_xapk`：手動提供 XAPK URL 與遊戲版本。
+- `google_play`：使用 Google Play 下載，需要額外 secrets。
 
-- `manual_xapk`：手動提供 `.xapk` 直鏈與 `game_version`。
-- `google_play`：保留作為 Google Play 來源，需要設定 `PLAY_EMAIL` 與 `AAS_TOKEN` secrets。
+workflow 會：
 
-patch 流程會下載 XAPK 或 split APKs，使用 `APKEditor` 合併，再用 pinned `Kajaqq/gaku-patcher` embedded patcher 產出 embedded-mode patched APK，最後建立 `game-v...` release 和 `gkms-game-patch.json`。雲端 patch 前會從 Localify module APK 移除內建翻譯資源，patched game 不攜帶翻譯包；翻譯仍由 app 內資源更新提供。
-
-## Actions 觸發範圍
-
-- `Android CI` 只在 app 原始碼、Gradle 設定、或 app build workflow 變動時自動執行；README、翻譯包更新、game patch workflow 變動不會觸發 app build。
-- `Game Patch Release` 可手動執行，也可排程檢查遊戲新版本。沒有新遊戲版本時應跳過，不重新發同版本 release，除非手動設定 `force=true`。
+1. 下載乾淨遊戲包。
+2. 合併 split APK。
+3. 下載最新 Localify app APK 作為 module。
+4. 移除 module 內建翻譯資源，保留使用者自選語言包模式。
+5. 使用 pinned LSPatch embedded patcher 產出 patched game APK。
+6. 建立 `game-v...` release 與 `gkms-game-patch.json`。
 
 ## Credits
 
+- [原作者 / upstream: chinosk6/gakuen-imas-localify](https://github.com/chinosk6/gakuen-imas-localify)
 - [LSPosed / LSPatch](https://github.com/LSPosed/LSPatch)
 - [EFForg/apkeep](https://github.com/EFForg/apkeep)
 - [REAndroid/APKEditor](https://github.com/REAndroid/APKEditor)

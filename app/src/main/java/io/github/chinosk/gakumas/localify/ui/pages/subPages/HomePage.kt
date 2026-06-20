@@ -2,7 +2,9 @@ package io.github.chinosk.gakumas.localify.ui.pages.subPages
 
 import io.github.chinosk.gakumas.localify.ui.components.GakuGroupBox
 import android.content.res.Configuration.UI_MODE_NIGHT_NO
+import android.os.Handler
 import android.os.Environment
+import android.os.Looper
 import android.util.Log
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -108,6 +110,7 @@ fun HomePage(modifier: Modifier = Modifier,
     var onlineDownloadProgress by rememberSaveable { mutableStateOf(-1f) }
     var onlineErrorString by rememberSaveable { mutableStateOf("") }
     var onlineResult by remember { mutableStateOf<OnlineUpdateResult?>(null) }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     fun formatFileSize(size: Long): String {
         if (size <= 0) return "unknown size"
@@ -216,6 +219,24 @@ fun HomePage(modifier: Modifier = Modifier,
         val game = result.gamePatchUpdate
         val app = result.appUpdate
         when {
+            app != null && game != null -> {
+                context.mainUIConfirmStatUpdate(
+                    true,
+                    "Multiple updates",
+                    "${describeOnlineResult(result)}\n\nApp and game patch updates are both available. Install the app APK first, then return here and install the game APK.",
+                    onConfirm = { installAppUpdate(app) },
+                    onCancel = {
+                        mainHandler.post {
+                            context.mainUIConfirmStatUpdate(
+                                true,
+                                "Game patch update",
+                                "${describeOnlineResult(result)}\n\nDownload and install the patched game APK?",
+                                onConfirm = { installGamePatch(game) }
+                            )
+                        }
+                    }
+                )
+            }
             game != null -> {
                 context.mainUIConfirmStatUpdate(
                     true,
@@ -377,7 +398,7 @@ fun HomePage(modifier: Modifier = Modifier,
         }
     }
 
-    fun startTextureResourceUpdate() {
+    fun startTextureResourceUpdate(onFinished: (() -> Unit)? = null) {
         context?.mainPageTextureAssetsViewDataUpdate(
             downloadAbleState = false,
             errorString = "",
@@ -394,6 +415,7 @@ fun HomePage(modifier: Modifier = Modifier,
                     downloadAbleState = true,
                     errorString = reason,
                 )
+                onFinished?.invoke()
             },
             onSuccess = { releaseVersion, changed ->
                 context.mainPageTextureAssetsViewDataUpdate(
@@ -405,10 +427,11 @@ fun HomePage(modifier: Modifier = Modifier,
                 )
                 context.saveProgramConfig()
                 Log.d(TAG, "texture resource update finished: $releaseVersion changed=$changed")
+                onFinished?.invoke()
             })
     }
 
-    fun onClickTextureDownload(isHumanClick: Boolean = true) {
+    fun onClickTextureDownload(isHumanClick: Boolean = true, onFinished: (() -> Unit)? = null) {
         context?.mainPageTextureAssetsViewDataUpdate(
             downloadAbleState = false,
             errorString = "",
@@ -425,6 +448,7 @@ fun HomePage(modifier: Modifier = Modifier,
                 if (isHumanClick) {
                     context.mainUIConfirmStatUpdate(true, "Error", reason)
                 }
+                onFinished?.invoke()
             },
             onResult = { data, localVersion ->
                 if (!isHumanClick) {
@@ -435,6 +459,7 @@ fun HomePage(modifier: Modifier = Modifier,
                             downloadProgressState = -1f,
                             localTextureResourceVersion = localVersion
                         )
+                        onFinished?.invoke()
                         return@checkUpdateTextureAssets
                     }
                 }
@@ -443,7 +468,7 @@ fun HomePage(modifier: Modifier = Modifier,
                     "${data.name}\n$localVersion -> ${data.tag_name}\n${data.body}\n\n${TimeUtils.convertIsoToLocalTime(data.published_at)}",
                     onConfirm = {
                         resourceSettingsViewModel.expanded = true
-                        startTextureResourceUpdate()
+                        startTextureResourceUpdate(onFinished)
                     },
                     onCancel = {
                         context.mainPageTextureAssetsViewDataUpdate(
@@ -451,6 +476,7 @@ fun HomePage(modifier: Modifier = Modifier,
                             errorString = "",
                             downloadProgressState = -1f
                         )
+                        onFinished?.invoke()
                     }
                 )
             })
@@ -473,17 +499,30 @@ fun HomePage(modifier: Modifier = Modifier,
                     programConfig.value.useAPITextureAssets &&
                     programConfig.value.useAPITextureAssetsURL.isNotEmpty()
 
+                fun checkOnlineAfterAssets() {
+                    checkOnlineUpdates(true)
+                }
+
                 if (shouldCheckResource) {
                     onClickDownload(false, false) {
                         if (shouldCheckTexture) {
-                            onClickTextureDownload(false)
+                            onClickTextureDownload(false) {
+                                checkOnlineAfterAssets()
+                            }
+                        }
+                        else {
+                            checkOnlineAfterAssets()
                         }
                     }
                 }
                 else if (shouldCheckTexture) {
-                    onClickTextureDownload(false)
+                    onClickTextureDownload(false) {
+                        checkOnlineAfterAssets()
+                    }
                 }
-                checkOnlineUpdates(true)
+                else {
+                    checkOnlineAfterAssets()
+                }
             }
         }
         finally {
