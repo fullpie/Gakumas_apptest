@@ -124,10 +124,13 @@ object RemoteAPIFilesChecker {
                                 // Check and save update
                                 val releaseVersion = releaseData.tag_name
                                 val localVersion = getLocalVersion(context)
-                                if (releaseVersion != localVersion) {
+                                val targetFile = File(context.filesDir, "$BASEPATH/remote.zip")
+                                if (releaseVersion != localVersion || !targetFile.isFile) {
+                                    var foundZipAsset = false
                                     for (asset in releaseData.assets) {
                                         if (!asset.name.endsWith(".zip")) continue
-                                        val targetFile = File(context.filesDir, "$BASEPATH/remote.zip")
+                                        foundZipAsset = true
+                                        targetFile.parentFile?.mkdirs()
                                         FileDownloader.downloadFileResumable(
                                             url = asset.browser_download_url,
                                             outputFile = targetFile,
@@ -144,6 +147,11 @@ object RemoteAPIFilesChecker {
                                         )
                                         break
                                     }
+                                    if (!foundZipAsset) {
+                                        onFailed(-1, "No zip asset found in release $releaseVersion")
+                                    }
+                                } else {
+                                    onSuccess(targetFile, releaseVersion)
                                 }
                             } else {
                                 onFailed(-1, "Response body is null")

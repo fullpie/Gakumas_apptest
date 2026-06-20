@@ -5,6 +5,7 @@ import android.content.Intent
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import io.github.chinosk.gakumas.localify.mainUtils.RemoteAPIFilesChecker
 import io.github.chinosk.gakumas.localify.mainUtils.TextureResourceUpdater
 import io.github.chinosk.gakumas.localify.mainUtils.json
 import io.github.chinosk.gakumas.localify.models.GakumasConfig
@@ -175,4 +176,49 @@ fun <T> T.onClickStartGame() where T : Activity, T : IHasConfigItems {
     }
 
     startActivity(intent)
+}
+
+fun <T> T.onClickStartGameWhenAssetsReady(finishAfterStart: Boolean = false)
+        where T : Activity, T : IHasConfigItems {
+    val apiResourceFile = File(filesDir, "remote_files/remote.zip")
+    val shouldFetchApiResource = programConfig.useAPIAssets &&
+            !apiResourceFile.exists() &&
+            programConfig.useAPIAssetsURL.isNotBlank()
+
+    if (!shouldFetchApiResource) {
+        onClickStartGame()
+        if (finishAfterStart) {
+            finish()
+        }
+        return
+    }
+
+    Toast.makeText(this, "Downloading translation resources...", Toast.LENGTH_SHORT).show()
+    RemoteAPIFilesChecker.updateLocalAssets(
+        this,
+        programConfig.useAPIAssetsURL,
+        onDownload = { _, _, _ -> },
+        onFailed = { _, error ->
+            runOnUiThread {
+                Toast.makeText(
+                    this,
+                    "Translation resource download failed: $error",
+                    Toast.LENGTH_LONG
+                ).show()
+                onClickStartGame()
+                if (finishAfterStart) {
+                    finish()
+                }
+            }
+        },
+        onSuccess = { _, _ ->
+            runOnUiThread {
+                Toast.makeText(this, "Translation resources ready.", Toast.LENGTH_SHORT).show()
+                onClickStartGame()
+                if (finishAfterStart) {
+                    finish()
+                }
+            }
+        }
+    )
 }

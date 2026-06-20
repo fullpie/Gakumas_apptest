@@ -16,8 +16,7 @@ class TranslucentActivity : ComponentActivity(), IConfigurableActivity<Transluce
         val requestData = intent.getStringExtra("gkmsData")
         if (requestData != null) {
             if (requestData == "requestConfig") {
-                onClickStartGame()
-                finish()
+                onClickStartGameWhenAssetsReady(finishAfterStart = true)
             }
         }
     }

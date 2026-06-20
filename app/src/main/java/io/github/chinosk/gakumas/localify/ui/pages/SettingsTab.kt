@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.chinosk.gakumas.localify.MainActivity
 import io.github.chinosk.gakumas.localify.models.GakumasConfig
-import io.github.chinosk.gakumas.localify.onClickStartGame
+import io.github.chinosk.gakumas.localify.onClickStartGameWhenAssetsReady
 import io.github.chinosk.gakumas.localify.ui.components.GakuTabRow
 import io.github.chinosk.gakumas.localify.ui.components.icons.AutoFixHigh
 import io.github.chinosk.gakumas.localify.ui.pages.subPages.AboutPage
@@ -83,7 +83,7 @@ fun SettingsTabs(modifier: Modifier = Modifier,
                             contentDescription = "GotoPatch")
                     }
                     FloatingActionButton(
-                        onClick = { context?.onClickStartGame() },
+                        onClick = { context?.onClickStartGameWhenAssetsReady() },
                         //modifier = Modifier.align(Alignment.End),
                         containerColor = MaterialTheme.colorScheme.primary,
                         shape = CircleShape
