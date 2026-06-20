@@ -176,6 +176,22 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
             }
         })
 
+        XposedBridge.hookAllMethods(appActivityClass, "onNewIntent", object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                Log.d(TAG, "onNewIntent")
+                val currActivity = param.thisObject as Activity
+                val newIntent = param.args[0] as? Intent ?: return
+                currActivity.intent = newIntent
+                gameActivity = currActivity
+                if (getConfigError != null) {
+                    showGetConfigFailed(currActivity)
+                }
+                else {
+                    initGkmsConfig(currActivity)
+                }
+            }
+        })
+
         val cls = lpparam.classLoader.loadClass("com.unity3d.player.UnityPlayer")
         XposedHelpers.findAndHookMethod(
             cls,
