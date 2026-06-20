@@ -207,6 +207,8 @@ jobs:
           fi
 
       - name: Download Localify module APK
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           localify_url="$(python .github/scripts/latest_app_asset.py --repository "$GITHUB_REPOSITORY")"

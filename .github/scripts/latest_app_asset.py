@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import urllib.request
 
 
 def fetch_json(url: str):
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "gkms-localify-actions",
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     request = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "gkms-localify-actions",
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
