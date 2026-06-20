@@ -593,7 +593,7 @@ class GakumasHookMain : IXposedHookLoadPackage, IXposedHookZygoteInit {
         val programData = intent.getStringExtra("localData")
         if (gkmsData != null) {
             val readVersion = intent.getStringExtra("lVerName")
-            checkPluginVersion(activity, readVersion)
+            Log.i(TAG, "Plugin module version: embedded=${BuildConfig.MODULE_VERSION_NAME}, requested=$readVersion")
 
             gkmsDataInited = true
             val initConfig = try {
