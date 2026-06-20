@@ -24,21 +24,18 @@ namespace
     bool EnsureShadowHookInitialized()
     {
         const int initResult = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false);
-        const int initErr = shadowhook_get_init_errno();
-        if (initErr == SHADOWHOOK_ERRNO_OK) {
+        if (initResult == SHADOWHOOK_ERRNO_OK || initResult == SHADOWHOOK_ERRNO_PENDING) {
             GakumasLocal::Log::InfoFmt(
-                    "shadowhook initialized: result=%d initErr=%d",
-                    initResult,
-                    initErr
+                    "shadowhook initialized: result=%d",
+                    initResult
             );
             return true;
         }
 
         GakumasLocal::Log::ErrorFmt(
-                "shadowhook init failed: result=%d initErr=%d %s",
+                "shadowhook init failed: result=%d %s",
                 initResult,
-                initErr,
-                shadowhook_to_errmsg(initErr)
+                shadowhook_to_errmsg(initResult)
         );
         return false;
     }
