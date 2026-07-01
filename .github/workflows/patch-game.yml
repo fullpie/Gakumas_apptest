@@ -337,9 +337,15 @@ jobs:
         if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
           set -euo pipefail
+          keystore="$RUNNER_TEMP/gkms-upload.p12"
+          printf '%s' "$KEYSTOREB64" | base64 -d > "$keystore"
           rm -rf ls_patched
           set +e
-          java -jar LSPatchEmbed.jar "$GAME_APK_NAME" -m "$LOCALIFY_MODULE_APK" -o ls_patched --force
+          java -jar LSPatchEmbed.jar "$GAME_APK_NAME" \
+            -m "$LOCALIFY_MODULE_APK" \
+            -o ls_patched \
+            --force \
+            --keystore "$keystore" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD"
           lspatch_rc=$?
           set -e
           patched="$(find ls_patched -type f -name '*.apk' -print -quit || true)"
@@ -363,32 +369,20 @@ jobs:
                   raise SystemExit(f"Patched APK missing required entries: {', '.join(missing)}")
               print(f"Patched APK zip entries: {len(names)}")
           PY
-      - name: Sign patched game APK
+
+      - name: Verify patched game APK
         if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
           set -euo pipefail
-          keystore="$RUNNER_TEMP/gkms-upload.p12"
-          signed_apk="$RUNNER_TEMP/signed-$PATCHED_APK_NAME"
-          unsigned_size="$(stat -c%s "$PATCHED_APK_NAME")"
-
-          printf '%s' "$KEYSTOREB64" | base64 -d > "$keystore"
-          apksigner sign \
-            --ks "$keystore" \
-            --ks-type PKCS12 \
-            --ks-key-alias "$ANDROID_KEY_ALIAS" \
-            --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
-            --key-pass "pass:$ANDROID_KEY_PASSWORD" \
-            --out "$signed_apk" \
-            "$PATCHED_APK_NAME"
-          apksigner verify --verbose --print-certs "$signed_apk"
-          signed_size="$(stat -c%s "$signed_apk")"
-          max_expected_size=$((unsigned_size + 64 * 1024 * 1024))
-          if [ "$signed_size" -gt "$max_expected_size" ]; then
-            echo "Signed APK grew unexpectedly: unsigned=$unsigned_size signed=$signed_size"
+          apksigner verify --verbose --print-certs "$PATCHED_APK_NAME"
+          clean_size="$(stat -c%s "$GAME_APK_NAME")"
+          patched_size="$(stat -c%s "$PATCHED_APK_NAME")"
+          max_expected_size=$((clean_size + 64 * 1024 * 1024))
+          if [ "$patched_size" -gt "$max_expected_size" ]; then
+            echo "Patched APK grew unexpectedly: clean=$clean_size patched=$patched_size"
             echo "Refusing to publish a likely-expanded LSPatch APK."
             exit 1
           fi
-          mv "$signed_apk" "$PATCHED_APK_NAME"
 
       - name: Write metadata
         if: ${{ env.SHOULD_RELEASE != 'false' }}
