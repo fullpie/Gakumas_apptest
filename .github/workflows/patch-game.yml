@@ -166,10 +166,6 @@ jobs:
       FORCE: ${{ inputs.force || false }}
       PLAY_EMAIL: ${{ secrets.PLAY_EMAIL }}
       AAS_TOKEN: ${{ secrets.AAS_TOKEN }}
-      KEYSTOREB64: ${{ secrets.KEYSTOREB64 }}
-      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v5
@@ -216,15 +212,6 @@ jobs:
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install "build-tools;34.0.0"
           echo "$ANDROID_HOME/build-tools/34.0.0" >> "$GITHUB_PATH"
-
-      - name: Check signing secrets
-        if: ${{ env.SHOULD_RELEASE != 'false' }}
-        run: |
-          set -euo pipefail
-          test -n "${KEYSTOREB64:-}" || { echo "KEYSTOREB64 secret is required for stable game patch signing"; exit 1; }
-          test -n "${ANDROID_KEY_ALIAS:-}" || { echo "ANDROID_KEY_ALIAS secret is required for stable game patch signing"; exit 1; }
-          test -n "${ANDROID_KEYSTORE_PASSWORD:-}" || { echo "ANDROID_KEYSTORE_PASSWORD secret is required for stable game patch signing"; exit 1; }
-          test -n "${ANDROID_KEY_PASSWORD:-}" || { echo "ANDROID_KEY_PASSWORD secret is required for stable game patch signing"; exit 1; }
 
       - name: Check required secrets
         if: ${{ env.SOURCE == 'google_play' }}
@@ -337,15 +324,10 @@ jobs:
         if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
           set -euo pipefail
-          keystore="$RUNNER_TEMP/gkms-upload.p12"
-          printf '%s' "$KEYSTOREB64" | base64 -d > "$keystore"
           rm -rf ls_patched
           set +e
-          java -jar LSPatchEmbed.jar "$GAME_APK_NAME" \
-            -m "$LOCALIFY_MODULE_APK" \
-            -o ls_patched \
-            --force \
-            --keystore "$keystore" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD"
+          # Keep LSPatch's built-in signer so game patch releases remain install-compatible.
+          java -jar LSPatchEmbed.jar "$GAME_APK_NAME" -m "$LOCALIFY_MODULE_APK" -o ls_patched --force
           lspatch_rc=$?
           set -e
           patched="$(find ls_patched -type f -name '*.apk' -print -quit || true)"
