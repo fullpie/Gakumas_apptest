@@ -166,6 +166,10 @@ jobs:
       FORCE: ${{ inputs.force || false }}
       PLAY_EMAIL: ${{ secrets.PLAY_EMAIL }}
       AAS_TOKEN: ${{ secrets.AAS_TOKEN }}
+      KEYSTOREB64: ${{ secrets.KEYSTOREB64 }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v5
@@ -181,6 +185,46 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+
+      - name: Prepare Android signing tools
+        run: |
+          set -eux
+          ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+          SDKMANAGER=""
+          for candidate in \
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" \
+            "$ANDROID_HOME/cmdline-tools/13.0/bin/sdkmanager" \
+            "$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
+          do
+            if [ -x "$candidate" ]; then
+              SDKMANAGER="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $ANDROID_HOME"
+            exit 1
+          fi
+
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "build-tools;34.0.0"
+          echo "$ANDROID_HOME/build-tools/34.0.0" >> "$GITHUB_PATH"
+
+      - name: Check signing secrets
+        if: ${{ env.SHOULD_RELEASE != 'false' }}
+        run: |
+          set -euo pipefail
+          test -n "${KEYSTOREB64:-}" || { echo "KEYSTOREB64 secret is required for stable game patch signing"; exit 1; }
+          test -n "${ANDROID_KEY_ALIAS:-}" || { echo "ANDROID_KEY_ALIAS secret is required for stable game patch signing"; exit 1; }
+          test -n "${ANDROID_KEYSTORE_PASSWORD:-}" || { echo "ANDROID_KEYSTORE_PASSWORD secret is required for stable game patch signing"; exit 1; }
+          test -n "${ANDROID_KEY_PASSWORD:-}" || { echo "ANDROID_KEY_PASSWORD secret is required for stable game patch signing"; exit 1; }
 
       - name: Check required secrets
         if: ${{ env.SOURCE == 'google_play' }}
@@ -327,6 +371,28 @@ jobs:
             cat /tmp/patched-unzip-test.log
             echo "::warning::unzip -t exited with $unzip_rc for $PATCHED_APK_NAME; continuing because Python zip validation passed."
           fi
+
+      - name: Sign patched game APK
+        if: ${{ env.SHOULD_RELEASE != 'false' }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/gkms-upload.p12"
+          aligned_apk="$RUNNER_TEMP/aligned-$PATCHED_APK_NAME"
+          signed_apk="$RUNNER_TEMP/signed-$PATCHED_APK_NAME"
+
+          printf '%s' "$KEYSTOREB64" | base64 -d > "$keystore"
+          zipalign -f -p 4 "$PATCHED_APK_NAME" "$aligned_apk"
+          apksigner sign \
+            --ks "$keystore" \
+            --ks-type PKCS12 \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --key-pass "pass:$ANDROID_KEY_PASSWORD" \
+            --out "$signed_apk" \
+            "$aligned_apk"
+          apksigner verify --verbose --print-certs "$signed_apk"
+          mv "$signed_apk" "$PATCHED_APK_NAME"
+          unzip -t "$PATCHED_APK_NAME" >/dev/null
 
       - name: Write metadata
         if: ${{ env.SHOULD_RELEASE != 'false' }}
