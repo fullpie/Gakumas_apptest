@@ -368,11 +368,10 @@ jobs:
         run: |
           set -euo pipefail
           keystore="$RUNNER_TEMP/gkms-upload.p12"
-          aligned_apk="$RUNNER_TEMP/aligned-$PATCHED_APK_NAME"
           signed_apk="$RUNNER_TEMP/signed-$PATCHED_APK_NAME"
+          unsigned_size="$(stat -c%s "$PATCHED_APK_NAME")"
 
           printf '%s' "$KEYSTOREB64" | base64 -d > "$keystore"
-          zipalign -f -p 4 "$PATCHED_APK_NAME" "$aligned_apk"
           apksigner sign \
             --ks "$keystore" \
             --ks-type PKCS12 \
@@ -380,8 +379,15 @@ jobs:
             --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
             --key-pass "pass:$ANDROID_KEY_PASSWORD" \
             --out "$signed_apk" \
-            "$aligned_apk"
+            "$PATCHED_APK_NAME"
           apksigner verify --verbose --print-certs "$signed_apk"
+          signed_size="$(stat -c%s "$signed_apk")"
+          max_expected_size=$((unsigned_size + 64 * 1024 * 1024))
+          if [ "$signed_size" -gt "$max_expected_size" ]; then
+            echo "Signed APK grew unexpectedly: unsigned=$unsigned_size signed=$signed_size"
+            echo "Refusing to publish a likely-expanded LSPatch APK."
+            exit 1
+          fi
           mv "$signed_apk" "$PATCHED_APK_NAME"
 
       - name: Write metadata
