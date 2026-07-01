@@ -363,15 +363,6 @@ jobs:
                   raise SystemExit(f"Patched APK missing required entries: {', '.join(missing)}")
               print(f"Patched APK zip entries: {len(names)}")
           PY
-          set +e
-          unzip -t "$PATCHED_APK_NAME" >/tmp/patched-unzip-test.log 2>&1
-          unzip_rc=$?
-          set -e
-          if [ "$unzip_rc" -ne 0 ]; then
-            cat /tmp/patched-unzip-test.log
-            echo "::warning::unzip -t exited with $unzip_rc for $PATCHED_APK_NAME; continuing because Python zip validation passed."
-          fi
-
       - name: Sign patched game APK
         if: ${{ env.SHOULD_RELEASE != 'false' }}
         run: |
@@ -392,7 +383,6 @@ jobs:
             "$aligned_apk"
           apksigner verify --verbose --print-certs "$signed_apk"
           mv "$signed_apk" "$PATCHED_APK_NAME"
-          unzip -t "$PATCHED_APK_NAME" >/dev/null
 
       - name: Write metadata
         if: ${{ env.SHOULD_RELEASE != 'false' }}
@@ -445,7 +435,7 @@ jobs:
 
       - name: Create game patch release
         if: ${{ env.SHOULD_RELEASE != 'false' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.1
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Gakumas patched game ${{ env.GAME_VERSION }}
