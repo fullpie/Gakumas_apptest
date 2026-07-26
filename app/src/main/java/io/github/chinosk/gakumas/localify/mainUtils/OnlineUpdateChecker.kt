@@ -94,6 +94,53 @@ data class OnlineUpdateResult(
 )
 
 
+internal fun compareVersionNames(left: String, right: String): Int {
+    val leftParts = Regex("\\d+").findAll(left).map { it.value.toIntOrNull() ?: 0 }.toList()
+    val rightParts = Regex("\\d+").findAll(right).map { it.value.toIntOrNull() ?: 0 }.toList()
+    val size = maxOf(leftParts.size, rightParts.size)
+    for (i in 0 until size) {
+        val l = leftParts.getOrElse(i) { 0 }
+        val r = rightParts.getOrElse(i) { 0 }
+        if (l != r) return l.compareTo(r)
+    }
+    return 0
+}
+
+
+internal fun findLatestRelease(
+    releases: List<ReleaseInfo>,
+    tagPrefix: String,
+    hasRequiredAsset: (ReleaseAssetInfo) -> Boolean
+): ReleaseInfo? {
+    return releases
+        .asSequence()
+        .filter { it.tag_name.startsWith(tagPrefix) && it.assets.any(hasRequiredAsset) }
+        .maxWithOrNull(Comparator { left, right ->
+            val versionOrder = compareVersionNames(
+                left.tag_name.removePrefix(tagPrefix),
+                right.tag_name.removePrefix(tagPrefix)
+            )
+            if (versionOrder != 0) versionOrder else left.published_at.compareTo(right.published_at)
+        })
+}
+
+
+internal fun shouldUpdateGamePatch(
+    installedVersion: String?,
+    installedIsPatched: Boolean,
+    installedPatchMode: String?,
+    targetVersion: String,
+    targetPatchMode: String
+): Boolean {
+    if (installedVersion == null) return true
+    return when (compareVersionNames(targetVersion, installedVersion)) {
+        1 -> true
+        -1 -> false
+        else -> !installedIsPatched || installedPatchMode != targetPatchMode
+    }
+}
+
+
 object OnlineUpdateChecker {
     private const val RELEASES_API = "https://api.github.com/repos/fullpie/Gakumas_apptest/releases?per_page=30"
     const val GAME_PACKAGE_NAME = "com.bandainamcoent.idolmaster_gakuen"
@@ -158,49 +205,51 @@ object OnlineUpdateChecker {
 
     private fun findAppUpdate(context: Context, releases: List<ReleaseInfo>): AppUpdate? {
         val currentVersion = getOwnVersionName(context)
-        val release = releases.firstOrNull { release ->
-            release.tag_name.startsWith("app-v") &&
-                    release.assets.any { it.name.endsWith(".apk", ignoreCase = true) }
+        val release = findLatestRelease(releases, "app-v") {
+            it.name.endsWith(".apk", ignoreCase = true)
         } ?: return null
         val latestVersion = release.tag_name.removePrefix("app-")
-        if (compareVersions(latestVersion, currentVersion) <= 0) return null
+        if (compareVersionNames(latestVersion, currentVersion) <= 0) return null
         val asset = release.assets.first { it.name.endsWith(".apk", ignoreCase = true) }
         return AppUpdate(release, asset, currentVersion, latestVersion)
     }
 
     private fun findGamePatchUpdate(context: Context, releases: List<ReleaseInfo>): GamePatchUpdate? {
-        for (release in releases) {
-            if (!release.tag_name.startsWith("game-v")) continue
-            val metadataAsset = release.assets.firstOrNull { it.name == "gkms-game-patch.json" } ?: continue
-            val metadata = fetchGameMetadata(metadataAsset)
-            val patchedApk = metadata.assets.firstOrNull {
-                it.name.endsWith(".apk", ignoreCase = true)
-            } ?: continue
-            val installedVersion = getPackageVersionName(context, metadata.gamePackageName)
-            val installedIsPatched = isPackagePatched(context, metadata.gamePackageName)
-            val installedPatchMode = getInstalledPatchMode(context, metadata.gamePackageName)
-            val shouldUpdateGamePatch = installedVersion != metadata.gameVersion ||
-                    !installedIsPatched ||
-                    installedPatchMode != metadata.patchMode
-            // A same-version patched APK can be rebuilt with a different hash; that alone must not force a game update.
-            if (shouldUpdateGamePatch) {
-                val installedSha256 = if (installedIsPatched) {
-                    getInstalledPackageSha256(context, metadata.gamePackageName)
-                } else {
-                    null
-                }
-                return GamePatchUpdate(
-                    release,
-                    metadata,
-                    patchedApk,
-                    installedVersion,
-                    installedIsPatched,
-                    installedPatchMode,
-                    installedSha256
-                )
-            }
+        val release = findLatestRelease(releases, "game-v") {
+            it.name == "gkms-game-patch.json"
+        } ?: return null
+        val metadataAsset = release.assets.first { it.name == "gkms-game-patch.json" }
+        val metadata = fetchGameMetadata(metadataAsset)
+        val patchedApk = metadata.assets.firstOrNull {
+            it.name.endsWith(".apk", ignoreCase = true)
+        } ?: return null
+        val installedVersion = getPackageVersionName(context, metadata.gamePackageName)
+        val installedIsPatched = isPackagePatched(context, metadata.gamePackageName)
+        val installedPatchMode = getInstalledPatchMode(context, metadata.gamePackageName)
+        if (!shouldUpdateGamePatch(
+                installedVersion,
+                installedIsPatched,
+                installedPatchMode,
+                metadata.gameVersion,
+                metadata.patchMode
+            )
+        ) return null
+
+        // A same-version patched APK can be rebuilt with a different hash; that alone must not force a game update.
+        val installedSha256 = if (installedIsPatched) {
+            getInstalledPackageSha256(context, metadata.gamePackageName)
+        } else {
+            null
         }
-        return null
+        return GamePatchUpdate(
+            release,
+            metadata,
+            patchedApk,
+            installedVersion,
+            installedIsPatched,
+            installedPatchMode,
+            installedSha256
+        )
     }
 
     private fun getOwnVersionName(context: Context): String {
@@ -281,15 +330,4 @@ object OnlineUpdateChecker {
         }.getOrNull()
     }
 
-    private fun compareVersions(left: String, right: String): Int {
-        val leftParts = Regex("\\d+").findAll(left).map { it.value.toIntOrNull() ?: 0 }.toList()
-        val rightParts = Regex("\\d+").findAll(right).map { it.value.toIntOrNull() ?: 0 }.toList()
-        val size = maxOf(leftParts.size, rightParts.size)
-        for (i in 0 until size) {
-            val l = leftParts.getOrElse(i) { 0 }
-            val r = rightParts.getOrElse(i) { 0 }
-            if (l != r) return l.compareTo(r)
-        }
-        return 0
-    }
 }

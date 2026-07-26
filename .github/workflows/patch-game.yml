@@ -429,7 +429,7 @@ jobs:
             Embedded patcher: Kajaqq/gaku-patcher pinned lspatch_embed.jar.
 
             Required app package: io.github.chinosk.gakumas.localify.
-          make_latest: false
+          make_latest: ${{ !inputs.prerelease }}
           prerelease: ${{ inputs.prerelease || false }}
           files: |
             ${{ env.PATCHED_APK_NAME }}

@@ -15,8 +15,8 @@ android {
         applicationId "io.github.chinosk.gakumas.localify"
         minSdk 29
         targetSdk 34
-        versionCode 27
-        versionName "v3.4.9"
+        versionCode 28
+        versionName "v3.4.10"
         buildConfigField "String", "VERSION_NAME", "\"${versionName}\""
         // Only bump these when the module embedded into patched game APKs must change.
         buildConfigField "long", "MODULE_VERSION_CODE", "26L"
@@ -135,4 +135,6 @@ dependencies {
     implementation(libs.shadowhook)
     compileOnly(libs.xposed.api)
     implementation(libs.kotlinx.serialization.json)
+
+    testImplementation 'junit:junit:4.13.2'
 }
