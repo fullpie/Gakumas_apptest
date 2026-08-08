@@ -15,7 +15,7 @@
 4. 安裝遊戲補丁 APK。
 5. 開啟 Localify app，更新翻譯包後從 app 啟動遊戲。
 
-`game-v...` 的乾淨遊戲包來源預設為 APKPure 的 XAPK，GitHub Actions 會下載乾淨包後重新打包成補丁 APK。
+`game-v...` 乾淨的遊戲包來源預設為 APKPure 的 XAPK，GitHub Actions 會下載乾淨包後重新打包成補丁 APK，全自動透過github完成編譯，如不放心也可以自行編譯。
 
 ## 簽名與覆蓋安裝
 
