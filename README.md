@@ -9,13 +9,12 @@
 
 ## 一般安裝
 
-1. 到 GitHub Releases 下載最新 `app-v...` 的 `GakumasLocalify-*.apk`。
-2. 安裝 Localify app。
-3. 下載最新 `game-v...` 的 `Gakumas_*_Localify_Embedded.apk`。
-4. 安裝遊戲補丁 APK。
+1. 到 GitHub Releases 下載最新 `app-v...` 的 `GakumasLocalify-*.apk`。   
+2. 下載最新 `game-v...` 的 `Gakumas_*_Localify_Embedded.apk`。
+4. 安裝Localify app，遊戲補丁 apk。
 5. 開啟 Localify app，更新翻譯包後從 app 啟動遊戲。
 
-`game-v...` 乾淨的遊戲包來源預設為 APKPure 的 XAPK，GitHub Actions 會下載乾淨包後重新打包成補丁 APK，全自動透過github完成編譯，如不放心也可以自行編譯。
+`game-v...` 乾淨的遊戲包來源預設為 APKPure 的 XAPK，GitHub Actions 會下載乾淨包後重新打包成補丁 APK，apk全自動透過github完成編譯，沒有使用本地端編譯，如不放心也可以自行編譯。
 
 ## 簽名與覆蓋安裝
 
@@ -36,6 +35,8 @@ App 更新和遊戲補丁更新彼此獨立；app 更新不代表需要重新安
 當 app 提示有新版本，或遇到 app 功能異常、亂碼、下載失敗等問題時，再更新 `app-v...` APK。
 
 遊戲本體需要更新時，開啟 Gakumas Localify 更新遊戲即可。
+
+
 
 ## 自行編譯 app
 
